@@ -223,6 +223,15 @@ def main():
     _wait(clientID)
     center_position = cup_position[0]
 
+    state_space_size = 3 #cup is either to the left, right, or same as recieve
+    action_space_size = 5
+    q_table = np.zeros((state_space_size, action_space_size))
+    exploration_rate = 0.7
+    discount_rate = 0.99
+    max_exploration_rate = 1
+    min_exploration_rate = 0.01
+    exploration_decay_rate = 0.01
+
     for j in range(velReal.shape[0]):
         # 60HZ
         triggerSim(clientID)
@@ -233,10 +242,11 @@ def main():
         cubes_position, cup_position = get_state(object_shapes_handles,
                                                  clientID, pour, j)
 
-        print(f"Step {j}, Cubes position: {cubes_position}, Cup position: {cup_position}")
+       # print(f"Step {j}, Cubes position: {cubes_position}, Cup position: {cup_position}")
 
         # Rotate cup
         speed = velReal[j]
+        print(speed)
 
         position = rotate_cup(clientID, speed, pour)
 
@@ -247,19 +257,32 @@ def main():
         # Move cup laterally
         actions = [-2, -1, 0, 1, 2]
 
+        '''exploration_rate_threshold = np.random.uniform(0, 1)
+        if exploration_rate_threshold > exploration_rate:
+            action = np.argmax(q_table[state,:])
+        else:
+            action = q_table[state,:].sample()
+
+        
+        #update Q-table for Q(s,a)
+        q_table[state, action] = q_table[state, action] * (1 - learning_rate) + \
+            learning_rate * (reward + discount_rate * np.max(q_table[new_state, :]))'''
+
+
+        #move cup randomly (for part 1)
         choice = np.random.choice(actions)
 
         '''if receive_position[0] > cup_position[0]:
-            move_cup(clientID, pour, actions[4], cup_position, center_position)
+            choice = actions[4]
         elif receive_position[0] < cup_position[0]:
-            move_cup(clientID, pour, actions[0], cup_position, center_position)
+            choice = actions[0]
         else:
-            pass'''
+            choice = actions[2]'''
 
         move_cup(clientID, pour, choice, cup_position, center_position)
         
 
-        print(f"Action taken: {choice}")
+        #print(f"Action taken: {choice}")
 
         # call move_cup function
        # move_cup(clientID, pour, actions[4], cup_position, center_position)
