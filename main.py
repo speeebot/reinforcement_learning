@@ -11,6 +11,7 @@
 """
 
 import sys
+import math
 
 sys.path.append('MacAPI')
 import numpy as np
@@ -155,10 +156,10 @@ def set_cup_initial_position(clientID, pour, receive, cup_position, rng):
     triggerSim(clientID)
     returnCode, pour_position = sim.simxGetObjectPosition(
         clientID, pour, -1, sim.simx_opmode_buffer)
-    print(f'Pouring Cup Moved Position:{cup_position}')
+    print(f'Pouring Cup Moved Position:{pour_position}')
     returnCode, receive_position = sim.simxGetObjectPosition(
         clientID, receive, -1, sim.simx_opmode_buffer)
-    print(f'Receiving Cup Position:{cup_position}')
+    print(f'Receiving Cup Position:{receive_position}')
     return pour_position, receive_position
 
 
@@ -207,6 +208,13 @@ def _wait(clientID):
         triggerSim(clientID)
 
 
+def get_next_state(cur_pos, action):
+    if action == 0:
+        return cur_pos - 1
+    else:
+        return cur_pos + 1
+
+
 def main():
 
     rng = np.random.default_rng()
@@ -218,19 +226,28 @@ def main():
     object_shapes_handles, cup_position = get_object_handles(clientID, pour)
 
     # Get initial position of the cups
-    cup_position, receive_position = set_cup_initial_position(
-        clientID, pour, receive, cup_position, rng)
+    cup_position, receive_position = set_cup_initial_position(clientID, pour, receive, cup_position, rng)
     _wait(clientID)
     center_position = cup_position[0]
 
-    state_space_size = 3 #cup is either to the left, right, or same as recieve
+    #state space composed of rotation speed of source cup (1000), position of source cup (max - min = 0.1 -> resolution of 0.001 -> 100 possible positions),
+    #and position of two cubes (???)
+    state_space_size = int(velReal.shape[0] * 100 )
     action_space_size = 5
     q_table = np.zeros((state_space_size, action_space_size))
-    exploration_rate = 0.7
+    learning_rate = 0.1
     discount_rate = 0.99
+    exploration_rate = 0.7
     max_exploration_rate = 1
     min_exploration_rate = 0.01
     exploration_decay_rate = 0.01
+
+    rewards = 0 #if both cubes are within the radius of the recieve cup, then reward + 1
+
+    param_max_x = sim.simxGetFloatParam(receive, sim.sim_objfloatparam_objbbox_max_x, sim.simx_opmode_blocking)
+    param_min_y = sim.simxGetFloatParam(object_shapes_handles[0], sim.sim_objfloatparam_objbbox_min_x, sim.simx_opmode_blocking)
+
+    print(f"params, x_max: {param_max_x}, x_min:{param_min_y}")
 
     for j in range(velReal.shape[0]):
         # 60HZ
@@ -242,13 +259,15 @@ def main():
         cubes_position, cup_position = get_state(object_shapes_handles,
                                                  clientID, pour, j)
 
-       # print(f"Step {j}, Cubes position: {cubes_position}, Cup position: {cup_position}")
+        #print(f"Step {j}, Cubes position: {cubes_position}, Cup position: {cup_position}")
 
         # Rotate cup
         speed = velReal[j]
-        print(speed)
+        #print(f"STATE SPACE SIZE: {state_space_size}")
 
         position = rotate_cup(clientID, speed, pour)
+
+        #print(position)
 
         #position = 1
         # call rotate_cup function and assign the return value to position variable
@@ -270,28 +289,18 @@ def main():
 
 
         #move cup randomly (for part 1)
-        choice = np.random.choice(actions)
-
-        '''if receive_position[0] > cup_position[0]:
-            choice = actions[4]
-        elif receive_position[0] < cup_position[0]:
-            choice = actions[0]
-        else:
-            choice = actions[2]'''
-
-        move_cup(clientID, pour, choice, cup_position, center_position)
-        
-
-        #print(f"Action taken: {choice}")
-
+        action = np.random.choice(actions)
         # call move_cup function
-       # move_cup(clientID, pour, actions[4], cup_position, center_position)
+        move_cup(clientID, pour, action, cup_position, center_position)
+        
+        #print(f"Step {j}, Cubes position: {cubes_position}, Action taken: {action}")
 
         # Break if cup goes back to vertical position
         if j > 10 and position > 0:
             break
 
     print(f"Cubes final position: {cubes_position}")
+
     # Stop simulation
     stop_simulation(clientID)
 
