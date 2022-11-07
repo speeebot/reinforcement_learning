@@ -77,7 +77,8 @@ if __name__ == "__main__":
     triggerSim(clientID)
 
     # change position of the source cup
-    source_position[0] -= 0.1
+    #source_position[0] -= 0.1
+    source_position[0] = receiver_position[0] - 0.05
     returnCode = sim.simxSetObjectPosition(clientID, pour, -1, source_position,
                                            sim.simx_opmode_blocking)
 
@@ -100,4 +101,4 @@ if __name__ == "__main__":
     print(f'Sphere moved Position:{sphere_position}')
 
     # # Stop simulation
-    stop_simulation(clientID)
+    #stop_simulation(clientID)

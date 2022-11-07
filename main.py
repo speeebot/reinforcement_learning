@@ -222,13 +222,13 @@ def main():
     velReal = rotation_velocity(rng)
 
     # Start simulation
-    clientID, pour, receive = start_simulation()
-    object_shapes_handles, cup_position = get_object_handles(clientID, pour)
+    clientID, source_cup, receive_cup = start_simulation()
+    object_shapes_handles, source_cup_position = get_object_handles(clientID, source_cup)
 
     # Get initial position of the cups
-    cup_position, receive_position = set_cup_initial_position(clientID, pour, receive, cup_position, rng)
+    source_position, receive_position = set_cup_initial_position(clientID, source_cup, receive_cup, source_cup_position, rng)
     _wait(clientID)
-    center_position = cup_position[0]
+    center_position = source_position[0]
 
     #state space composed of rotation speed of source cup (1000), position of source cup (max - min = 0.1 -> resolution of 0.001 -> 100 possible positions),
     #and position of two cubes (???)
@@ -242,12 +242,12 @@ def main():
     min_exploration_rate = 0.01
     exploration_decay_rate = 0.01
 
-    rewards = 0 #if both cubes are within the radius of the recieve cup, then reward + 1
+    rewards = 0 #if both cubes are within the radius of the recieve cup, then reward + 1 (RADIUS IS 0.05)
 
-    param_max_x = sim.simxGetFloatParam(receive, sim.sim_objfloatparam_objbbox_max_x, sim.simx_opmode_blocking)
-    param_min_y = sim.simxGetFloatParam(object_shapes_handles[0], sim.sim_objfloatparam_objbbox_min_x, sim.simx_opmode_blocking)
+    #param_max_x = sim.simxGetInt32Param(receive, sim.sim_objfloatparam_objbbox_max_z, sim.simx_opmode_blocking)
+    #param_min_x = sim.simxGetInt32Param(pour, sim.sim_objfloatparam_objbbox_min_z, sim.simx_opmode_blocking)
 
-    print(f"params, x_max: {param_max_x}, x_min:{param_min_y}")
+    #print(f"params, x_max: {param_max_x}, x_min:{param_min_x}")
 
     for j in range(velReal.shape[0]):
         # 60HZ
@@ -257,7 +257,7 @@ def main():
 
         # Get current state
         cubes_position, cup_position = get_state(object_shapes_handles,
-                                                 clientID, pour, j)
+                                                 clientID, source_cup, j)
 
         #print(f"Step {j}, Cubes position: {cubes_position}, Cup position: {cup_position}")
 
@@ -265,7 +265,7 @@ def main():
         speed = velReal[j]
         #print(f"STATE SPACE SIZE: {state_space_size}")
 
-        position = rotate_cup(clientID, speed, pour)
+        position = rotate_cup(clientID, speed, source_cup)
 
         #print(position)
 
@@ -291,7 +291,7 @@ def main():
         #move cup randomly (for part 1)
         action = np.random.choice(actions)
         # call move_cup function
-        move_cup(clientID, pour, action, cup_position, center_position)
+        move_cup(clientID, source_cup, action, cup_position, center_position)
         
         #print(f"Step {j}, Cubes position: {cubes_position}, Action taken: {action}")
 
@@ -299,7 +299,15 @@ def main():
         if j > 10 and position > 0:
             break
 
-    print(f"Cubes final position: {cubes_position}")
+    #print(f"Cubes final position: {cubes_position}")
+    #receiving cup radius is around 0.05, check if cubes made it into receiving cup
+    count = 0
+    for cube_position in cubes_position:
+        count += 1
+        if cube_position[0] < receive_position[0] + 0.05 and cube_position[0] > receive_position[0] - 0.05:
+            print(f"Cube {count} is in receiving cup")
+        else:
+            print(f"Cube {count} failed to make it into receiving cup")
 
     # Stop simulation
     stop_simulation(clientID)
