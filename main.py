@@ -239,7 +239,7 @@ def main():
     #actions to move cup laterally
     actions = [-2, -1, 0, 1, 2]
     #map of actions to Q-table indices
-    actions_map = {-2:0, -1:1, 0:2, 1:3, 2:4}
+    actions_map = {0:-2, 1:-1, 2:0, 3:1, 4:2}
 
     learning_rate = 0.1
     discount_rate = 0.99
@@ -269,11 +269,6 @@ def main():
         #initialize the speed of this frame
         speed = velReal[j]
 
-        #pick a random action from the current state's row in the q-table
-        action = random.choice(q_table[state,:])
-
-        print(f"action selected: {action}")
-
         # Get current state
         cubes_position, source_cup_position = get_state(object_shapes_handles,
                                                  clientID, source_cup)
@@ -302,11 +297,14 @@ def main():
         exploration_rate_threshold = np.random.uniform(0, 1)
         #if exploitation is picked, select action where max Q-value exists within state's row in the q-table
         if exploration_rate_threshold > exploration_rate:
-            action = np.argmax(q_table[state,:])
+            max_value = np.argmax(q_table[state,:])
+            action = q_table.index(max_value)
+        #if exploration is picked, select a random action from the current state's row in the q-table
         else:
-            #if exploration is picked, select a random action from the current state's row in the q-table
             #action = random.choice(q_table[state,:])
             action = random.choice(actions)
+        
+        print(f"action selected: {action}")
 
         # Rotate cup
         position = rotate_cup(clientID, speed, source_cup)
@@ -330,6 +328,8 @@ def main():
         # Break if cup goes back to vertical position
         if j > 10 and position > 0:
             break
+        
+        #lower exploration rate from 1.0 to allow for exploitation after the first episode
 
     #print(f"Cubes final position: {cubes_position}")
 
