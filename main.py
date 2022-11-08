@@ -12,6 +12,7 @@
 
 import sys
 import math
+import random
 
 sys.path.append('MacAPI')
 import numpy as np
@@ -163,7 +164,7 @@ def set_cup_initial_position(clientID, pour, receive, cup_position, rng):
     return pour_position, receive_position
 
 
-def get_state(object_shapes_handles, clientID, pour, j):
+def get_state(object_shapes_handles, clientID, pour):
     ''' Function to get the cubes and pouring cup position '''
 
     # Get position of the objects
@@ -231,23 +232,33 @@ def main():
     center_position = source_position[0]
 
     #state space composed of rotation speed of source cup (1000), position of source cup (max - min = 0.1 -> resolution of 0.001 -> 100 possible positions),
-    #and position of two cubes (???)
-    state_space_size = int(velReal.shape[0] * 100 )
+    #and position of two cubes (2 -> either in the radius of the receiving cup or not?)
+    state_space_size = int(velReal.shape[0] * 100 * 2)
     action_space_size = 5
     q_table = np.zeros((state_space_size, action_space_size))
+    #actions to move cup laterally
+    actions = [-2, -1, 0, 1, 2]
+    #map of actions to Q-table indices
+    actions_map = {-2:0, -1:1, 0:2, 1:3, 2:4}
+
     learning_rate = 0.1
     discount_rate = 0.99
-    exploration_rate = 0.7
+    exploration_rate = 1.0
     max_exploration_rate = 1
     min_exploration_rate = 0.01
     exploration_decay_rate = 0.01
 
     rewards = 0 #if both cubes are within the radius of the recieve cup, then reward + 1 (RADIUS IS 0.05)
 
-    #param_max_x = sim.simxGetInt32Param(receive, sim.sim_objfloatparam_objbbox_max_z, sim.simx_opmode_blocking)
-    #param_min_x = sim.simxGetInt32Param(pour, sim.sim_objfloatparam_objbbox_min_z, sim.simx_opmode_blocking)
-
     #print(f"params, x_max: {param_max_x}, x_min:{param_min_x}")
+
+    # Get starting state
+    cubes_position, source_cup_position = get_state(object_shapes_handles,
+                                                clientID, source_cup)
+    
+    state = math.floor(abs(velReal[0] + source_cup_position[0]) * 1000 * 1)
+    print(f"source cup pos: {source_cup_position}, state: {state}")
+    #print(f"cubes pos: {cubes_position}, source_cup_pos: {source_cup_position}")
 
     for j in range(velReal.shape[0]):
         # 60HZ
@@ -255,43 +266,64 @@ def main():
         # Make sure simulation step finishes
         returnCode, pingTime = sim.simxGetPingTime(clientID)
 
+        #initialize the speed of this frame
+        speed = velReal[j]
+
+        #pick a random action from the current state's row in the q-table
+        action = random.choice(q_table[state,:])
+
+        print(f"action selected: {action}")
+
         # Get current state
-        cubes_position, cup_position = get_state(object_shapes_handles,
-                                                 clientID, source_cup, j)
+        cubes_position, source_cup_position = get_state(object_shapes_handles,
+                                                 clientID, source_cup)
 
         #print(f"Step {j}, Cubes position: {cubes_position}, Cup position: {cup_position}")
 
-        # Rotate cup
-        speed = velReal[j]
-        #print(f"STATE SPACE SIZE: {state_space_size}")
+        #receiving cup radius is around 0.05, check if cubes made it into receiving cup
+        flag = 0
+        reward = 0
+        for cube_position in cubes_position:
+            cube_x, cube_y, cube_z = cube_position[0], cube_position[1], cube_position[2]
+            receive_x, receive_y, receive_z = receive_position[0], receive_position[1], receive_position[2]
+            source_x, source_y, source_z = source_cup_position[0], source_cup_position[1], source_cup_position[2]
+            if cube_x < receive_x + 0.05 and cube_x > receive_x - 0.05:
+                if cube_y < receive_y + 0.05 and cube_y > receive_y - 0.05:
+                    #Both cubes are within the radius of the receiving cup
+                    new_state = math.floor(abs(speed + source_cup_position[0]) * 1000 * 2)
+            else:
+                #Atleast one cube is not within the radius of the receiving cup
+                new_state = math.floor(abs(speed + source_cup_position[0]) * 1000 * 1)
+                flag = 1
+            #negative distance between cubes and receive cup, bigger reward is better -> closer to receive cup
+            reward += -math.sqrt((cube_x - receive_x)**2 + (cube_y - receive_y)**2 + (cube_z - receive_z)**2)
+            print(f"REWARD: {reward}")
 
-        position = rotate_cup(clientID, speed, source_cup)
-
-        #print(position)
-
-        #position = 1
-        # call rotate_cup function and assign the return value to position variable
-        # it will be something like position = rotate_cup()
-
-        # Move cup laterally
-        actions = [-2, -1, 0, 1, 2]
-
-        '''exploration_rate_threshold = np.random.uniform(0, 1)
+        exploration_rate_threshold = np.random.uniform(0, 1)
+        #if exploitation is picked, select action where max Q-value exists within state's row in the q-table
         if exploration_rate_threshold > exploration_rate:
             action = np.argmax(q_table[state,:])
         else:
-            action = q_table[state,:].sample()
+            #if exploration is picked, select a random action from the current state's row in the q-table
+            #action = random.choice(q_table[state,:])
+            action = random.choice(actions)
 
-        
-        #update Q-table for Q(s,a)
-        q_table[state, action] = q_table[state, action] * (1 - learning_rate) + \
-            learning_rate * (reward + discount_rate * np.max(q_table[new_state, :]))'''
-
+        # Rotate cup
+        position = rotate_cup(clientID, speed, source_cup)
+        #print(position)
 
         #move cup randomly (for part 1)
-        action = np.random.choice(actions)
+        #action = np.random.choice(actions)
         # call move_cup function
-        move_cup(clientID, source_cup, action, cup_position, center_position)
+        move_cup(clientID, source_cup, action, source_cup_position, center_position)
+
+        #update Q-table for Q(s,a)
+        q_table[state, action] = q_table[state, action] * (1 - learning_rate) + \
+            learning_rate * (reward + discount_rate * np.max(q_table[new_state, :]))
+
+        #update state variable
+        state = new_state
+
         
         #print(f"Step {j}, Cubes position: {cubes_position}, Action taken: {action}")
 
@@ -300,18 +332,11 @@ def main():
             break
 
     #print(f"Cubes final position: {cubes_position}")
-    #receiving cup radius is around 0.05, check if cubes made it into receiving cup
-    count = 0
-    for cube_position in cubes_position:
-        count += 1
-        if cube_position[0] < receive_position[0] + 0.05 and cube_position[0] > receive_position[0] - 0.05:
-            print(f"Cube {count} is in receiving cup")
-        else:
-            print(f"Cube {count} failed to make it into receiving cup")
 
     # Stop simulation
     stop_simulation(clientID)
 
+    np.savetxt('q_table.txt', q_table)
 
 if __name__ == '__main__':
 
