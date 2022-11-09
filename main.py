@@ -221,8 +221,8 @@ def main():
     rewards_all_episodes = []
     learning_rate = 0.1
     discount_rate = 0.99
-    exploration_rate = 1
-    max_exploration_rate = 1
+    exploration_rate = 0.1466885449377839 #0.37786092411182526
+    max_exploration_rate = 0.1466885449377839 #0.37786092411182526
     min_exploration_rate = 0.01
     exploration_decay_rate = 0.01
     num_episodes = 100
@@ -357,7 +357,7 @@ def main():
         np.savetxt('q_table.txt', q_table)
         print("Q-table saved.")
     
-    np.savetxt('rewards_list.txt', rewards_all_episodes)
+    np.savetxt('rewards_list3.txt', rewards_all_episodes)
     print(f"final_exploration_rate: {exploration_rate}")
     print("Saved rewards for each episode to rewards_list.txt")
 
