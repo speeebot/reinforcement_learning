@@ -225,7 +225,7 @@ def main():
     max_exploration_rate = 0.06079027722859994 #0.1466885449377839 #0.37786092411182526
     min_exploration_rate = 0.01
     exploration_decay_rate = 0.01
-    num_episodes = 100
+    num_episodes = 1
 
     for episode in range(num_episodes):
         print(f"Episode {episode}:")
@@ -258,8 +258,6 @@ def main():
         cubes_position, source_cup_position = get_state(object_shapes_handles,
                                                     clientID, source_cup)
         
-        state = math.floor(abs(velReal[0] + source_cup_position[0]) * 1000 * 1)
-        print(f"source cup pos: {source_cup_position}, state: {state}")
         #print(f"cubes pos: {cubes_position}, source_cup_pos: {source_cup_position}")
 
         #load q_table.txt
@@ -282,36 +280,12 @@ def main():
             cubes_position, source_cup_position = get_state(object_shapes_handles,
                                                     clientID, source_cup)
 
+            # Update state
+            state = math.floor(abs(velReal[j] + source_cup_position[0]) * 1000 * 1)
+
             #print(f"Step {j}, Cubes position: {cubes_position}, Cup position: {cup_position}")
 
-            #receiving cup radius is around 0.05, check if cubes made it into receiving cup
-            flag = 0
-            reward = 0
-            for cube_position in cubes_position:
-                cube_x, cube_y, cube_z = cube_position[0], cube_position[1], cube_position[2]
-                receive_x, receive_y, receive_z = receive_position[0], receive_position[1], receive_position[2]
-                source_x, source_y, source_z = source_cup_position[0], source_cup_position[1], source_cup_position[2]
-                if (cube_x < receive_x + 0.05 and cube_x > receive_x - 0.05) and (cube_y < receive_y + 0.05 and cube_y > receive_y - 0.05):
-                        #Both cubes are within the radius of the receiving cup
-                        new_state = math.floor(abs(speed + source_cup_position[0]) * 1000 * 2)
-                else:
-                    #Atleast one cube is not within the radius of the receiving cup
-                    new_state = math.floor(abs(speed + source_cup_position[0]) * 1000 * 1)
-                    flag = 1
-                #negative distance between cubes and receive cup, bigger reward is better -> closer to receive cup
-                reward += -math.sqrt((cube_x - receive_x)**2 + (cube_y - receive_y)**2 + (cube_z - receive_z)**2)
-                print(f"REWARD: {reward}")
-
-            exploration_rate_threshold = np.random.uniform(0, 1)
-            # If exploitation is picked, select action where max Q-value exists within state's row in the q-table
-            if exploration_rate_threshold > exploration_rate:
-                # Select the smallest Q-value (subtract 2 to account for Q-table indices)
-                action = np.argmax(q_table[state,:]) - 2
-                #print(f"exploited action: {action}")
-            # If exploration is picked, select a random action from the current state's row in the q-table
-            else:
-                #action = random.choice(q_table[state,:])
-                action = random.choice(actions) - 2
+            action = np.argmax(q_table[state,:]) - 2 #select the smallest Q-value
             
             print(f"action selected: {action}")
 
@@ -319,21 +293,12 @@ def main():
             position = rotate_cup(clientID, speed, source_cup)
             #print(position)
 
-            #move cup randomly (for part 1)
+            # Move cup randomly (for part 1)
             #action = np.random.choice(actions)
-            # call move_cup function
+            # Call move_cup function
             move_cup(clientID, source_cup, action, source_cup_position, center_position)
 
-            # Add 2 to action to properly map to Q-table indices
-            action += 2
             #print(f"state: {state}, action: {action}")
-            #update Q-table for Q(s,a)
-            q_table[state, action] = q_table[state, action] * (1 - learning_rate) + \
-                learning_rate * (reward + discount_rate * np.max(q_table[new_state, :]))
-
-            #update state variable
-            state = new_state
-            rewards_current_episode += reward
             
             #print(f"Step {j}, Cubes position: {cubes_position}, Action taken: {action}")
 
@@ -343,24 +308,30 @@ def main():
 
         #end for
 
-        #Exploration rate decay
-        exploration_rate = min_exploration_rate + \
-            (max_exploration_rate - min_exploration_rate) * np.exp(-exploration_decay_rate*episode)
-        
-        #Append current episode's reward to total rewards list for later
-        rewards_all_episodes.append(rewards_current_episode)
         #print(f"Cubes final position: {cubes_position}")
 
         # Stop simulation
         stop_simulation(clientID)
         print("Simulation stopped.")
 
-        np.savetxt('q_table.txt', q_table)
-        print("Q-table saved.")
+        for cube_position in cubes_position:
+            cube_x, cube_y, cube_z = cube_position[0], cube_position[1], cube_position[2]
+            receive_x, receive_y, receive_z = receive_position[0], receive_position[1], receive_position[2]
+            source_x, source_y, source_z = source_cup_position[0], source_cup_position[1], source_cup_position[2]
+            if (cube_x < receive_x + 0.05 and cube_x > receive_x - 0.05) and (cube_y < receive_y + 0.05 and cube_y > receive_y - 0.05):
+            # Both cubes are within the radius of the receiving cup
+                flag = 1
+                #new_state = math.floor(abs(speed + source_cup_position[0]) * 1000 * 2)
+            else: 
+            # Atleast one cube is not within the radius of the receiving cup
+                flag = 0
+                #new_state = math.floor(abs(speed + source_cup_position[0]) * 1000 * 1)
     
-    np.savetxt('rewards_list4.txt', rewards_all_episodes)
-    print(f"final_exploration_rate: {exploration_rate}")
-    print("Saved rewards for each episode to rewards_list.txt")
+    print("Test finished.")
+    if flag:
+        print("Both cubes made it into the receiving cup.")
+    else:
+        print("Atleast one cube did not make it into the receiving cup.")
 
 if __name__ == '__main__':
 
