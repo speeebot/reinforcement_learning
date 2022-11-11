@@ -31,7 +31,7 @@ max_exploration_rate = 1.0 #0.06079027722859994 #0.1466885449377839 #0.377860924
 min_exploration_rate = 0.01
 exploration_decay_rate = 0.01
 
-num_episodes = 300
+num_episodes = 100
 
 #actions to move cup laterally
 actions = [-2, -1, 0, 1, 2]
@@ -278,7 +278,7 @@ def main():
         actions_map = {0:-2, 1:-1, 2:0, 3:1, 4:2}
 
         # Set state space and action space sizes
-        state_space_size = 100 # Resolution of 0.0002 for 100 per fifth section of the x-axis (-0.5 to 0.5) -> totaling 500
+        state_space_size = 500 # Resolution of 0.0002 for 100 per fifth section of the x-axis (-0.5 to 0.5) -> totaling 500
         action_space_size = 5 # [-2, -1, 0, 1, 2]
 
         #print(f"high: {source_high_x}, low: {source_low_x}, RANGE: {round(source_high_x-source_low_x, 3)}")
