@@ -101,4 +101,4 @@ if __name__ == "__main__":
     print(f'Sphere moved Position:{sphere_position}')
 
     # # Stop simulation
-    #stop_simulation(clientID)
+    stop_simulation(clientID)

@@ -36,9 +36,6 @@ num_episodes = 300
 #actions to move cup laterally
 actions = [-2, -1, 0, 1, 2]
 
-# Initialize Q-table
-q_table = dict()
-
 
 def setNumberOfBlocks(clientID, blocks, typeOf, mass, blockLength,
                       frictionCube, frictionCup):
@@ -227,40 +224,43 @@ def _wait(clientID):
         triggerSim(clientID)
 
 
-def update_q_table(state, action, new_state, reward):
-    # Create an ID for each state
-    state_id = '/'.join([str(x) for x in state])
-    new_state_id = '/'.join([str(x) for x in new_state])
+def update_q_table(q_table, state, action, new_state, reward, low, high):
+    # Add 2 to action variable to map correctly to Q-table indices
+    action += 2
+    # Normalize state values for q_table
+    state = normalize(state, low, high)
+    new_state = normalize(new_state, low, high)
+    # Update Q-table for Q(s,a)
+    q_table[state, action] = q_table[state, action] * (1 - learning_rate) + \
+                learning_rate * (reward + discount_rate * np.max(q_table[new_state, :]))
 
-    if state_id not in q_table:
-        q_table[state_id] = {action: 0 for action in actions}
-    if new_state_id not in q_table:
-        q_table[new_state_id] = {action: 0 for action in actions}
+def get_reward(source, receive):
+    s_x, s_y, s_z = source[0], source[1], source[2]
+    r_x, r_y, r_z = receive[0], receive[1], receive[2]
 
+    # Negative distance between source cup and receive cup
+    return -math.sqrt((s_x - r_x)**2 + (s_y - r_y)**2 + (s_z - r_z)**2)
 
-    if state_id in q_table:
-        print(f"{state_id}, {action}")
-        print(f"HELLO: {q_table[state_id].values()}")
-        q_table[state_id][action] = q_table[state_id][action] * (1 - learning_rate) + \
-            learning_rate * (reward + discount_rate * max(q_table[new_state_id].values()))
-                                                    #max(p[new_state_id] for p in q_table.values())
-    else:
-        value = 0 * (1 - learning_rate) + \
-            learning_rate * (reward + discount_rate * max(q_table[new_state_id].values()))
+def normalize(val, min_val, max_val):
+    #zi = (xi - min(x)) / max(x) - min(x)) * Q, where Q = 500 (max value in range)
+    #print(f"val: {val}, min_val: {min_val}, max_val: {max_val}")
+    norm_val = ((val - min_val) / (max_val - min_val)) * 500
+    #print(f"NORMALIZED VALUE: {norm_val}, ROUNDED: {int(norm_val)}")
+    return int(norm_val)
 
-        q_table[state_id] = {action: value}
-
-    
-    return state_id, new_state_id
-
+def check_range(val, low, high):
+    return low <= val <= high
 
 def main():
     rewards_all_episodes = []
     exploration_rate = 1.0
-    global q_table
+    
+    rewards_filename = "rewards_history.txt"
+    q_table_filename = "q_table.txt"
 
     for episode in range(num_episodes):
         print(f"Episode {episode}:")
+        
         # Set rotation velocity randomly
         rng = np.random.default_rng()
         velReal = rotation_velocity(rng)
@@ -277,27 +277,36 @@ def main():
         #map of actions to Q-table indices
         actions_map = {0:-2, 1:-1, 2:0, 3:1, 4:2}
 
+        # Set state space and action space sizes
+        state_space_size = 100 # Resolution of 0.0002 for 100 per fifth section of the x-axis (-0.5 to 0.5) -> totaling 500
+        action_space_size = 5 # [-2, -1, 0, 1, 2]
+
+        #print(f"high: {source_high_x}, low: {source_low_x}, RANGE: {round(source_high_x-source_low_x, 3)}")
+
+        # Initialize Q-table
+        q_table = np.zeros((state_space_size, action_space_size))
+
         # Get starting state
         cubes_position, source_cup_position = get_state(object_shapes_handles,
                                                     clientID, source_cup)
         
         #state = math.floor(abs(velReal[0] + source_cup_position[0]) * 10000)
-        state = [round(velReal[0], 4), round(source_cup_position[0], 4), round(cubes_position[0][0], 4), \
-            round(cubes_position[0][1], 4), round(cubes_position[0][2], 4), round(cubes_position[1][0], 4), \
-            round(cubes_position[1][1], 4), round(cubes_position[1][2], 4)]
+        state = source_cup_position[0]
         
-        state_id = '/'.join([str(x) for x in state])
-        print(state_id)
+        #state_id = '/'.join([str(x) for x in state])
+        #print(state_id)
 
         #print(f"source cup pos: {source_cup_position}, state: {state}")
         #print(f"cubes pos: {cubes_position}, source_cup_pos: {source_cup_position}")
 
         #load q_table.txt
-        if(os.path.exists("q_table.pkl")):
-            #q_table = np.loadtxt("q_table4.txt")
-            with open('q_table.pkl', 'rb') as f:
-                q_table = pickle.load(f)
-            print("Q-table loaded.")
+        #if(os.path.exists(q_table_filename)):
+        #    with open(q_table_filename, 'rb') as f:
+        #        q_table = pickle.load(f)
+                #load q_table.txt
+        if(os.path.exists(q_table_filename)):
+            q_table = np.loadtxt(q_table_filename)
+        print("Q-table loaded.")
 
         rewards_current_episode = 0
 
@@ -316,11 +325,12 @@ def main():
 
             #print(f"Step {j}, Cubes position: {cubes_position}, Cup position: {cup_position}")
 
-            # Initialize variables for x,y,z of source, receive, and both cubes
+            '''# Initialize variables for x,y,z of source, receive, and both cubes
             receive_x, receive_y, receive_z = receive_position[0], receive_position[1], receive_position[2]
             source_x, source_y, source_z = source_cup_position[0], source_cup_position[1], source_cup_position[2]
             cube1_x, cube1_y, cube1_z = cubes_position[0][0], cubes_position[0][1], cubes_position[0][2]
-            cube2_x, cube2_y, cube2_z = cubes_position[1][0], cubes_position[1][1], cubes_position[1][2]
+            cube2_x, cube2_y, cube2_z = cubes_position[1][0], cubes_position[1][1], cubes_position[1][2]'''
+
 
             # Receiving cup radius is around 0.05, check if cubes made it into receiving cup
             '''flag = 0
@@ -331,28 +341,43 @@ def main():
                 #Atleast one cube is not within the radius of the receiving cup
                 new_state = math.floor(abs(speed + source_x) * 1000 * 1)
                 flag = 1'''
-                #negative distance between cubes and receive cup, bigger reward is better -> closer to receive cup
-            reward = -math.sqrt((cube1_x - receive_x)**2 + (cube1_y - receive_y)**2 + (cube1_z - receive_z)**2) + \
-                -math.sqrt((cube2_x - receive_x)**2 + (cube2_y - receive_y)**2 + (cube2_z - receive_z)**2) 
-            #print(f"STATE: {state}, REWARD: {reward}")
                 
+            # Calculate reward as the negative distance between source cup and receive cup
+            #reward = get_reward(source_cup_position, receive_position)
+            
             # Update state
             #new_state = math.floor(abs(speed + source_x) * 10000)
-            new_state = [round(speed, 4), round(source_cup_position[0], 4), round(cubes_position[0][0], 4), \
-                    round(cubes_position[0][1], 4), round(cubes_position[0][2], 4), round(cubes_position[1][0], 4), \
-                    round(cubes_position[1][1], 4), round(cubes_position[1][2], 4)]
+            new_state = source_cup_position[0]
+
+            source_high_x = round(center_position + high, 3)
+            source_low_x = round(center_position + low, 3)
+            res = 0.0002
+
+            '''print(f"RANGE: {source_low_x + 0*res} to {source_low_x + 100*res}")
+            print(f"RANGE: {source_low_x + 101*res} to {source_low_x + 200*res}")
+            print(f"RANGE: {source_low_x + 201*res} to {source_low_x + 300*res}")
+            print(f"RANGE: {source_low_x + 301*res} to {source_low_x + 400*res}")
+            print(f"RANGE: {source_low_x + 401*res} to {source_low_x + 500*res}")
+            reward = 0'''
+            # Define ranges to map state space to a given action
+            if check_range(new_state, source_low_x + 0*res, source_low_x + 100*res):
+                reward = -2
+            elif check_range(new_state, source_low_x + 101*res, source_low_x + 200*res):
+                reward = -1
+            elif check_range(new_state, source_low_x + 201*res, source_low_x + 300*res):
+                reward = 1
+            elif check_range(new_state, source_low_x + 301*res, source_low_x + 400*res):
+                reward = -1
+            elif check_range(new_state, source_low_x + 401*res, source_low_x + 500*res):
+                reward = -2
+    
 
             exploration_rate_threshold = np.random.uniform(0, 1)
             # If exploitation is picked, select action where max Q-value exists within state's row in the q-table
             if exploration_rate_threshold > exploration_rate:
                 # Select the largest Q-value
-                if state_id in q_table:
-                    print(f"KEY ERROR?: {q_table[state_id]}, type: {type(q_table[state_id][0])}")
-                    action = max(q_table[state_id], key=q_table[state_id].get)
-                    print(f"EXPLOITED action selected: {action}")
-                else:   
-                    action = 0
-                    print(f"NO ACTION SELECTED: 0")
+                action = np.argmax(q_table[state,:]) - 2
+                print(f"EXPLOITED action selected: {action}")
             # If exploration is picked, select a random action from the current state's row in the q-table
             else:
                 #action = random.choice(q_table[state,:])
@@ -370,11 +395,11 @@ def main():
 
             # Add 2 to action to properly map to Q-table indices
             #action += 2
-            #print(f"state: {state}, action: {action}")
+            print(f"STATE: {state}, REWARD: {reward}, ACTION: {action}")
 
-            #update Q-table for Q(s,a)
-            state_id, new_state_id = update_q_table(state, action, new_state, reward)
-            print(f"STATE: {state_id}, ACTION: {action}")
+            print(state, new_state)
+            # Update Q-table for Q(s,a)
+            update_q_table(q_table, state, action, new_state, reward, source_low_x, source_high_x)
 
             #update state variable
             state = new_state
@@ -400,14 +425,13 @@ def main():
         stop_simulation(clientID)
         print("Simulation stopped.")
 
-        #np.savetxt('q_table4.txt', q_table)
-        #print("Q-table4 saved.")
-        with open('q_table.pkl', 'wb') as f:
-            pickle.dump(q_table, f)
-    
-    np.savetxt('rewards_listv4.txt', rewards_all_episodes)
-    print(f"final_exploration_rate: {exploration_rate}")
-    print("Saved rewards for each episode to rewards_listv4_2.txt")
+        np.savetxt(q_table_filename, q_table)
+        #with open(q_table_filename, 'wb') as f:
+        #    pickle.dump(q_table, f)
+        print(f"Q-table saved to {q_table_filename}")
+
+    np.savetxt(rewards_filename, rewards_all_episodes)
+    print(f"Saved rewards for each episode to {rewards_filename}")
 
 if __name__ == '__main__':
 
