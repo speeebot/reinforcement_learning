@@ -14,6 +14,7 @@ import sys
 import math
 import random
 import os.path
+import pickle
 
 sys.path.append('MacAPI')
 import numpy as np
@@ -260,16 +261,20 @@ def main():
         
         #print(f"cubes pos: {cubes_position}, source_cup_pos: {source_cup_position}")
 
-        #load q_table.txt
-        if(os.path.exists("q_table.txt")):
-            q_table = np.loadtxt("q_table.txt")
-            print("Q-table loaded.")
+        state = [round(velReal[0], 4), round(source_cup_position[0], 4), round(cubes_position[0][0], 4), \
+            round(cubes_position[0][1], 4), round(cubes_position[0][2], 4), round(cubes_position[1][0], 4), \
+            round(cubes_position[1][1], 4), round(cubes_position[1][2], 4)]
 
-        rewards_current_episode = 0
-
+        # Load Q-table
+        if(os.path.exists("q_table.pkl")):
+            with open('q_table.pkl', 'rb') as f:
+                q_table = pickle.load(f)
+            print("Q-table4 loaded.")
+        
         for j in range(velReal.shape[0]):
             # 60HZ
             triggerSim(clientID)
+
             # Make sure simulation step finishes
             returnCode, pingTime = sim.simxGetPingTime(clientID)
 
@@ -280,28 +285,30 @@ def main():
             cubes_position, source_cup_position = get_state(object_shapes_handles,
                                                     clientID, source_cup)
 
-            # Update state
-            state = math.floor(abs(velReal[j] + source_cup_position[0]) * 1000 * 1)
+            # Update state and select action
+            state = [round(speed, 4), round(source_cup_position[0], 4), round(cubes_position[0][0], 4), \
+                    round(cubes_position[0][1], 4), round(cubes_position[0][2], 4), round(cubes_position[1][0], 4), \
+                    round(cubes_position[1][1], 4), round(cubes_position[1][2], 4)]
+            #print(f"SPEED: {speed}")
+            state_id = '/'.join([str(x) for x in state])
 
-            #print(f"Step {j}, Cubes position: {cubes_position}, Cup position: {cup_position}")
-
-            action = np.argmax(q_table[state,:]) - 2 #select the smallest Q-value
-            
-            print(f"action selected: {action}")
+            if state_id in q_table:
+                action = max(q_table[state_id], key=q_table[state_id].get) #select the largest Q-value
+            else:
+                action = 0
+            # Account for high-precision values in state space, unlearned states
+            '''if q_table[state, action] == 0.0:
+                print(f"state: {state}, EMPTY STATE: ACTION 0")
+                action = 0
+            else:
+                print(f"state: {state}, action selected: {action}")'''
 
             # Rotate cup
             position = rotate_cup(clientID, speed, source_cup)
-            #print(position)
 
-            # Move cup randomly (for part 1)
-            #action = np.random.choice(actions)
-            # Call move_cup function
+            # Move cup laterally
             move_cup(clientID, source_cup, action, source_cup_position, center_position)
-
-            #print(f"state: {state}, action: {action}")
             
-            #print(f"Step {j}, Cubes position: {cubes_position}, Action taken: {action}")
-
             # Break if cup goes back to vertical position
             if j > 10 and position > 0:
                 break
@@ -314,18 +321,18 @@ def main():
         stop_simulation(clientID)
         print("Simulation stopped.")
 
+        receive_x, receive_y, receive_z = receive_position[0], receive_position[1], receive_position[2]
+        source_x, source_y, source_z = source_cup_position[0], source_cup_position[1], source_cup_position[2]
+
         for cube_position in cubes_position:
             cube_x, cube_y, cube_z = cube_position[0], cube_position[1], cube_position[2]
-            receive_x, receive_y, receive_z = receive_position[0], receive_position[1], receive_position[2]
-            source_x, source_y, source_z = source_cup_position[0], source_cup_position[1], source_cup_position[2]
-            if (cube_x < receive_x + 0.05 and cube_x > receive_x - 0.05) and (cube_y < receive_y + 0.05 and cube_y > receive_y - 0.05):
+            if (cube_x < receive_x + 0.05 and cube_x > receive_x - 0.05) and \
+             (cube_y < receive_y + 0.05 and cube_y > receive_y - 0.05):
             # Both cubes are within the radius of the receiving cup
                 flag = 1
-                #new_state = math.floor(abs(speed + source_cup_position[0]) * 1000 * 2)
             else: 
             # Atleast one cube is not within the radius of the receiving cup
                 flag = 0
-                #new_state = math.floor(abs(speed + source_cup_position[0]) * 1000 * 1)
     
     print("Test finished.")
     if flag:
