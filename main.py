@@ -31,6 +31,10 @@ max_exploration_rate = 1.0 #0.06079027722859994 #0.1466885449377839 #0.377860924
 min_exploration_rate = 0.01
 exploration_decay_rate = 0.01
 
+# Set state space and action space sizes
+state_space_size = 2000 # Resolution of 0.0002 for 100 per fifth section of the x-axis (-0.5 to 0.5) -> (-500 to 500) -> totaling 1000
+action_space_size = 5 # [-2, -1, 0, 1, 2]
+
 num_episodes = 100
 
 #actions to move cup laterally
@@ -228,11 +232,12 @@ def update_q_table(q_table, state, action, new_state, reward, low, high):
     # Add 2 to action variable to map correctly to Q-table indices
     action += 2
     # Normalize state values for q_table
-    state = normalize(state, low, high)
-    new_state = normalize(new_state, low, high)
+    norm_state = normalize(state, low, high)
+    norm_new_state = normalize(new_state, low, high)
+    #print(f"normalized state values: {norm_state}, {norm_new_state}")
     # Update Q-table for Q(s,a)
-    q_table[state, action] = q_table[state, action] * (1 - learning_rate) + \
-                learning_rate * (reward + discount_rate * np.max(q_table[new_state, :]))
+    q_table[norm_state, action] = q_table[norm_state, action] * (1 - learning_rate) + \
+                learning_rate * (reward + discount_rate * np.max(q_table[norm_new_state, :]))
 
 def get_reward(source, receive):
     s_x, s_y, s_z = source[0], source[1], source[2]
@@ -242,9 +247,9 @@ def get_reward(source, receive):
     return -math.sqrt((s_x - r_x)**2 + (s_y - r_y)**2 + (s_z - r_z)**2)
 
 def normalize(val, min_val, max_val):
-    #zi = (xi - min(x)) / max(x) - min(x)) * Q, where Q = 500 (max value in range)
+    #zi = (xi - min(x)) / max(x) - min(x)) * Q, where Q = state_space_size (max value in range)
     #print(f"val: {val}, min_val: {min_val}, max_val: {max_val}")
-    norm_val = ((val - min_val) / (max_val - min_val)) * 500
+    norm_val = ((val - min_val) / (max_val - min_val)) * 1500 # state space includes source cup position(500) and current frame number(1000)
     #print(f"NORMALIZED VALUE: {norm_val}, ROUNDED: {int(norm_val)}")
     return int(norm_val)
 
@@ -277,10 +282,6 @@ def main():
         #map of actions to Q-table indices
         actions_map = {0:-2, 1:-1, 2:0, 3:1, 4:2}
 
-        # Set state space and action space sizes
-        state_space_size = 500 # Resolution of 0.0002 for 100 per fifth section of the x-axis (-0.5 to 0.5) -> totaling 500
-        action_space_size = 5 # [-2, -1, 0, 1, 2]
-
         #print(f"high: {source_high_x}, low: {source_low_x}, RANGE: {round(source_high_x-source_low_x, 3)}")
 
         # Initialize Q-table
@@ -291,7 +292,7 @@ def main():
                                                     clientID, source_cup)
         
         #state = math.floor(abs(velReal[0] + source_cup_position[0]) * 10000)
-        state = source_cup_position[0]
+        state = source_cup_position[0] + 0
         
         #state_id = '/'.join([str(x) for x in state])
         #print(state_id)
@@ -316,7 +317,7 @@ def main():
             # Make sure simulation step finishes
             returnCode, pingTime = sim.simxGetPingTime(clientID)
 
-            #initialize the speed of this frame
+            #initialize the speed of the source cup at this frame
             speed = velReal[j]
 
             # Get current state
@@ -347,36 +348,52 @@ def main():
             
             # Update state
             #new_state = math.floor(abs(speed + source_x) * 10000)
-            new_state = source_cup_position[0]
+            new_state = source_cup_position[0] + j
 
-            source_high_x = round(center_position + high, 3)
+            print(f"new state: {new_state}, source_cup_position: {source_cup_position}, j: {j}")
+
             source_low_x = round(center_position + low, 3)
-            res = 0.0002
+            source_high_x = round(center_position + high + 1000, 3)
+            res = 0.0002 # Resolution of 0.0002 for 100 per fifth section of the x-axis (-0.5 to 0.5) -> totaling 500
 
-            '''print(f"RANGE: {source_low_x + 0*res} to {source_low_x + 100*res}")
-            print(f"RANGE: {source_low_x + 101*res} to {source_low_x + 200*res}")
-            print(f"RANGE: {source_low_x + 201*res} to {source_low_x + 300*res}")
-            print(f"RANGE: {source_low_x + 301*res} to {source_low_x + 400*res}")
-            print(f"RANGE: {source_low_x + 401*res} to {source_low_x + 500*res}")
-            reward = 0'''
+            '''print(f"RANGE: {source_low_x + 0*res} to {(source_low_x + 100)*res}") # Outer bounds -> negative reward
+            print(f"RANGE: {source_low_x + 101*res} to {source_low_x + 200*res}") # Closer to receive cup -> less negative reward
+            print(f"RANGE: {source_low_x + 201*res} to {source_low_x + 300*res}") # Where we want the source cup to be -> positive reward
+            print(f"RANGE: {source_low_x + 301*res} to {source_low_x + 400*res}") # Outer bounds -> less negative reward
+            print(f"RANGE: {source_low_x + 401*res} to {source_low_x + 500*res}") # Outer bounds -> negative reward
+            #print(f"{source_high_x}, {source_low_x + 500*res}")'''
+
             # Define ranges to map state space to a given action
+
+            # Outer bounds -> negative reward
             if check_range(new_state, source_low_x + 0*res, source_low_x + 100*res):
-                reward = -2
-            elif check_range(new_state, source_low_x + 101*res, source_low_x + 200*res):
-                reward = -1
-            elif check_range(new_state, source_low_x + 201*res, source_low_x + 300*res):
-                reward = 1
-            elif check_range(new_state, source_low_x + 301*res, source_low_x + 400*res):
-                reward = -1
+                reward = -5
+            # Closer to receive cup -> less negative reward
+            elif check_range(new_state, source_low_x + 101*res, source_low_x + 240*res):
+                reward = -3
+            # Where we want the source cup to be -> positive reward
+            elif check_range(new_state, source_low_x + 241*res, source_low_x + 245*res):
+                reward = 2
+            # Dead center -> very positive reward
+            elif check_range(new_state, source_low_x + 246*res, source_low_x + 255*res):
+                reward = 5
+            # Where we want the source cup to be -> positive reward
+            elif check_range(new_state, source_low_x + 256*res, source_low_x + 260*res):
+                reward = 2            
+            # Outer bounds -> less negative reward
+            elif check_range(new_state, source_low_x + 261*res, source_low_x + 400*res):
+                reward = -3
+            # Outer bounds -> negative reward
             elif check_range(new_state, source_low_x + 401*res, source_low_x + 500*res):
-                reward = -2
+                reward = -5
     
 
             exploration_rate_threshold = np.random.uniform(0, 1)
             # If exploitation is picked, select action where max Q-value exists within state's row in the q-table
             if exploration_rate_threshold > exploration_rate:
                 # Select the largest Q-value
-                action = np.argmax(q_table[state,:]) - 2
+                norm_state = normalize(state, source_low_x, source_high_x)
+                action = np.argmax(q_table[norm_state,:]) - 2
                 print(f"EXPLOITED action selected: {action}")
             # If exploration is picked, select a random action from the current state's row in the q-table
             else:
@@ -397,7 +414,7 @@ def main():
             #action += 2
             print(f"STATE: {state}, REWARD: {reward}, ACTION: {action}")
 
-            print(state, new_state)
+            #print(state, new_state)
             # Update Q-table for Q(s,a)
             update_q_table(q_table, state, action, new_state, reward, source_low_x, source_high_x)
 

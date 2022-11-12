@@ -217,6 +217,13 @@ def get_next_state(cur_pos, action):
     else:
         return cur_pos + 1
 
+def normalize(val, min_val, max_val):
+    #zi = (xi - min(x)) / max(x) - min(x)) * Q, where Q = 500 (max value in range)
+    #print(f"val: {val}, min_val: {min_val}, max_val: {max_val}")
+    norm_val = ((val - min_val) / (max_val - min_val)) * 500
+    #print(f"NORMALIZED VALUE: {norm_val}, ROUNDED: {int(norm_val)}")
+    return int(norm_val)
+
 
 def main():
     rewards_all_episodes = []
@@ -227,6 +234,9 @@ def main():
     min_exploration_rate = 0.01
     exploration_decay_rate = 0.01
     num_episodes = 1
+    
+    q_table_filename = "q_table.txt"
+
 
     for episode in range(num_episodes):
         print(f"Episode {episode}:")
@@ -245,7 +255,7 @@ def main():
 
         #state space composed of rotation speed of source cup (1000), position of source cup (max - min = 0.1 -> resolution of 0.001 -> 100 possible positions),
         #and position of two cubes (2 -> either in the radius of the receiving cup or not?)
-        state_space_size = int(velReal.shape[0] * 4)
+        state_space_size = 2000
         action_space_size = 5
         q_table = np.zeros((state_space_size, action_space_size))
 
@@ -261,15 +271,12 @@ def main():
         
         #print(f"cubes pos: {cubes_position}, source_cup_pos: {source_cup_position}")
 
-        state = [round(velReal[0], 4), round(source_cup_position[0], 4), round(cubes_position[0][0], 4), \
-            round(cubes_position[0][1], 4), round(cubes_position[0][2], 4), round(cubes_position[1][0], 4), \
-            round(cubes_position[1][1], 4), round(cubes_position[1][2], 4)]
+        state = source_cup_position[0] + 0
 
         # Load Q-table
-        if(os.path.exists("q_table.pkl")):
-            with open('q_table.pkl', 'rb') as f:
-                q_table = pickle.load(f)
-            print("Q-table4 loaded.")
+        if(os.path.exists(q_table_filename)):
+            q_table = np.loadtxt(q_table_filename)
+        print("Q-table loaded.")
         
         for j in range(velReal.shape[0]):
             # 60HZ
@@ -286,22 +293,18 @@ def main():
                                                     clientID, source_cup)
 
             # Update state and select action
-            state = [round(speed, 4), round(source_cup_position[0], 4), round(cubes_position[0][0], 4), \
-                    round(cubes_position[0][1], 4), round(cubes_position[0][2], 4), round(cubes_position[1][0], 4), \
-                    round(cubes_position[1][1], 4), round(cubes_position[1][2], 4)]
-            #print(f"SPEED: {speed}")
-            state_id = '/'.join([str(x) for x in state])
+            state = source_cup_position[0] + j
 
-            if state_id in q_table:
-                action = max(q_table[state_id], key=q_table[state_id].get) #select the largest Q-value
-            else:
-                action = 0
-            # Account for high-precision values in state space, unlearned states
-            '''if q_table[state, action] == 0.0:
-                print(f"state: {state}, EMPTY STATE: ACTION 0")
-                action = 0
-            else:
-                print(f"state: {state}, action selected: {action}")'''
+            #print(f"SPEED: {speed}")
+
+            source_high_x = round(center_position + high, 3)
+            source_low_x = round(center_position + low + 1000, 3)
+
+            norm_state = normalize(state, source_low_x, source_high_x)
+            print(norm_state)
+            action = np.argmax(q_table[norm_state,:]) - 2 #select the largest Q-value
+
+            print(f"action selected: {action}")
 
             # Rotate cup
             position = rotate_cup(clientID, speed, source_cup)
