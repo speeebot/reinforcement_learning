@@ -35,42 +35,38 @@ def main():
         env.start_simulation()
 
         # Set initial position of the source cup
-        env.set_random_cup_position(rng)
+            # State is x coordinate of source cup
+        state = env.reset(rng)
+        done = 0
+        # Keep track of rewards for each episode, to be stored in a list for analysis
+        rewards_current_episode = 0
 
         # Get starting state
         #cubes_position, source_cup_position = get_state(object_shapes_handles,
         #                                            clientID, source_cup)
         
-        #state space is x coordinate of source cup
-        
         if(os.path.exists(q_table_filename)):
             q_table = np.loadtxt(q_table_filename)
         print("Q-table loaded.")
 
-        # Keep track of rewards for each episode, to be stored in a list for analysis
-        rewards_current_episode = 0
-
         for j in range(velReal.shape[0]):
-            # 60HZ
-            triggerSim(clientID)
-            # Make sure simulation step finishes
-            returnCode, pingTime = sim.simxGetPingTime(clientID)
 
+            env.step_chores()
             #initialize the speed of the source cup at this frame
-            speed = velReal[j]
+            env.speed = velReal[j]
 
             # Get current state
-            cubes_position, source_cup_position = get_state(object_shapes_handles,
-                                                    clientID, source_cup)
+            #cubes_position, source_cup_position = get_state(object_shapes_handles,
+            #                                        clientID, source_cup)
             
             # Update state
-            new_state = source_cup_position[0]
+            #new_state = source_cup_position[0]
 
-            source_low_x = center_position + low
+            '''source_low_x = center_position + low
             source_high_x = center_position + high
             receive_low_x = receive_position[0] + low
             receive_high_x = receive_position[0] + high
-            source_x = round(source_cup_position[0], 3)
+            source_x = round(source_cup_position[0], 3)'''
 
             '''print(f"RANGE: {source_low_x + 0*res} to {(source_low_x + 100)*res}") # Outer bounds -> negative reward
             print(f"RANGE: {source_low_x + 101*res} to {source_low_x + 200*res}") # Closer to receive cup -> less negative reward
@@ -89,32 +85,33 @@ def main():
             # If exploitation is picked, select action where max Q-value exists within state's row in the q-table
             if exploration_rate_threshold > exploration_rate:
                 # Select the largest Q-value
-                action = np.argmax(q_table[state,:])
+                action = np.argmax(q_table[state,:]) - 2
             # If exploration is picked, select a random action from the current state's row in the q-table
             else:
-                action = env.action_space.sample()
+                action = env.action_space.sample() - 2
+
+            #Take next action
+            new_state, reward, done, info = env.step(action)
 
             # Calculate reward as the negative distance between the source up and the receiving cup
-            reward = get_distance_3d(source_cup_position, receive_position)
+            #reward = get_distance_3d(source_cup_position, receive_position)
 
             # Rotate cup based on speed value
-            position = rotate_cup(clientID, speed, source_cup)
+            #env.rotate_cup()
             # Move cup laterally based on selected action in Q-table
-            move_cup(clientID, source_cup, action, source_cup_position, center_position)
+            #env.move_cup(action)
             # Update Q-table for Q(s,a)
-            update_q_table(q_table, state, action, new_state, reward, source_low_x, source_high_x)
+            print(f"STATE: {normalize(state, -0.85 + low, -0.85 + high)}, REWARD: {reward}, ACTION: {action}")
+            update_q_table(q_table, state, action, new_state, reward)
 
-            print(f"STATE: {normalize(state, -1, 1)}, REWARD: {reward}, ACTION: {action}")
 
             #update state variable
             state = new_state
             rewards_current_episode += reward
             
             # Break if cup goes back to vertical position
-            if j > 10 and position > 0:
-                print("BREAKED")
+            if done:
                 break
-
         #end for
 
         #Exploration rate decay
@@ -125,8 +122,7 @@ def main():
         rewards_all_episodes.append(rewards_current_episode)
 
         # Stop simulation
-        stop_simulation(clientID)
-        print("Simulation stopped.")
+        env.stop_simulation()
 
         np.savetxt(q_table_filename, q_table)
         print(f"Q-table saved to {q_table_filename}")

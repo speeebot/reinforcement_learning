@@ -1,4 +1,4 @@
-from gym import Env
+from gym import Env, utils
 from gym.spaces import Discrete, Box
 
 import sys
@@ -23,7 +23,7 @@ min_exploration_rate = 0.01
 exploration_decay_rate = 0.01
 
 # Set state space and action space sizes
-state_space_size = 2000 # Resolution of 0.0002 for 100 per fifth section of the x-axis (-0.5 to 0.5) -> (-500 to 500) -> totaling 1000
+state_space_size = 500 # Resolution of 0.0002 for 100 per fifth section of the x-axis (-0.5 to 0.5) -> (-500 to 500) -> totaling 1000
 action_space_size = 5 # [-2, -1, 0, 1, 2]
 
 num_episodes = 100
@@ -54,11 +54,6 @@ def triggerSim(clientID):
     step_status = 'successful' if e == 0 else 'error'
     # print(f'Finished Step {step_status}')
 
-def stop_simulation(clientID):
-    ''' Function to stop the episode '''
-    sim.simxStopSimulation(clientID, sim.simx_opmode_blocking)
-    sim.simxFinish(clientID)
-
 def get_state(object_shapes_handles, clientID, pour):
     ''' Function to get the cubes and pouring cup position '''
 
@@ -75,38 +70,16 @@ def get_state(object_shapes_handles, clientID, pour):
 
     return obj_pos, cup_position
 
-def move_cup(clientID, pour, action, cup_position, center_position):
-    ''' Function to move the pouring cup laterally during the rotation '''
-
-    global low, high
-    resolution = 0.001
-    move_x = resolution * action
-    movement = cup_position[0] + move_x
-    if center_position + low < movement < center_position + high:
-        cup_position[0] = movement
-        returnCode = sim.simxSetObjectPosition(clientID, pour, -1,
-                                               cup_position,
-                                               sim.simx_opmode_blocking)
-
-def rotate_cup(clientID, speed, pour):
-    ''' Function to rotate cup '''
-    errorCode = sim.simxSetJointTargetVelocity(clientID, pour, speed,
-                                               sim.simx_opmode_oneshot)
-    returnCode, position = sim.simxGetJointPosition(clientID, pour,
-                                                    sim.simx_opmode_buffer)
-    return position
-
 def wait_(clientID):
     for _ in range(60):
         triggerSim(clientID)
 
-def update_q_table(q_table, state, action, new_state, reward, low, high):
+def update_q_table(q_table, state, action, new_state, reward):
     # Add 2 to action variable to map correctly to Q-table indices
     action += 2
-    # Normalize state values for q_table
-    norm_state = normalize(state, -1, 1)
-    norm_new_state = normalize(new_state, -1, 1)
-    print(f"state values: {state}, {new_state}, normalized state values: {norm_state}, {norm_new_state}")
+    norm_state = normalize(state, -0.85 + low, -0.85 + high)
+    norm_new_state = normalize(new_state, -0.85 + low, -0.85 + high)
+    #print(f"state values: {state}, {new_state}, normalized state values: {norm_state}, {norm_new_state}")
     # Update Q-table for Q(s,a)
     q_table[norm_state, action] = q_table[norm_state, action] * (1 - learning_rate) + \
                 learning_rate * (reward + discount_rate * np.max(q_table[norm_new_state, :]))
@@ -146,7 +119,7 @@ def get_reward(rewards, pos, low_x, high_x, res, j):
 def normalize(val, min_val, max_val):
     #zi = (xi - min(x)) / max(x) - min(x)) * Q, where Q = state_space_size (max value in range)
     #print(f"val: {val}, min_val: {min_val}, max_val: {max_val}")
-    norm_val = ((val - min_val) / (max_val - min_val))# state space includes source cup position(500) and current frame number(1000)
+    norm_val = ((val - min_val) / (max_val - min_val)) * state_space_size # state space includes source cup position(500) and current frame number(1000)
     #print(f"NORMALIZED VALUE: {norm_val}, ROUNDED: {int(norm_val)}")
     return int(norm_val)
 
@@ -154,16 +127,18 @@ def check_range(val, low, high):
     #print(f"value: {val}, range: {low} to {high}")
     return low <= val <= high
 
+
 class CubesCups(Env):
     def __init__(self):
         # [-2, -1, 0, 1, 2]
         self.action_space = Discrete(5)
         #speed, source x coordinate
-        self.observation_space = Box(2,) 
+        self.observation_space = Box(low = 0, high = 500) 
         self.state = None
         self.total_frames = 1000
         #j in range(velReal.shape[0])
-        self.current_frame = None 
+        self.current_frame = 0
+        self.speed = None
 
         self.clientID = None
         self.source_cup_handle = None
@@ -174,18 +149,40 @@ class CubesCups(Env):
         self.receive_cup_position = None
         self.cubes_position = []
         self.center_position = None
+        self.joint_position = None
 
 
     def step(self, action):
 
+        # Calculate reward as the negative distance between the source up and the receiving cup
+        reward = get_distance_3d(self.source_cup_position, self.receive_cup_position) * 100
         
+        # Rotate cup based on speed value
+        self.rotate_cup()
+        # Move cup laterally based on selected action in Q-table
+        self.move_cup(action)
+
+
+        if self.current_frame > 10 and self.joint_position > 0:
+            done = True
+        else:
+            done = False
+        
+        self.current_frame += 1
+
+        info = {}
+
+        self.set_state()
+
         #Return step info
         return self.state, reward, done, info
-    def reset(self):
-        self.state = self.set_random_cup_position()
-        return self.state
+
+    def reset(self, rng):
+        return self.set_random_cup_position(rng)
+
     def render(self, action, reward):
         pass
+
     def start_simulation(self):
         ''' Function to communicate with Coppelia Remote API and start the simulation '''
         sim.simxFinish(-1)  # just in case, close all opened connections
@@ -222,6 +219,12 @@ class CubesCups(Env):
 
         #get object handles
         self.get_handles()
+
+    def stop_simulation(self):
+        ''' Function to stop the episode '''
+        sim.simxStopSimulation(self.clientID, sim.simx_opmode_blocking)
+        sim.simxFinish(self.clientID)
+        print("Simulation stopped.")
 
     def get_handles(self):
         # Drop blocks in source container
@@ -266,8 +269,8 @@ class CubesCups(Env):
         backward = [0.75, 0.8, 0.85]
         freq = 60
         ts = np.linspace(0, 1000 / freq, 1000)
-        velFor = self.rng.choice(forward) * np.sin(2 * np.pi * 1 / 20 * ts)
-        velBack = self.rng.choice(backward) * np.sin(2 * np.pi * 1 / 10 * ts)
+        velFor = rng.choice(forward) * np.sin(2 * np.pi * 1 / 20 * ts)
+        velBack = rng.choice(backward) * np.sin(2 * np.pi * 1 / 10 * ts)
         velSin = velFor
         idxFor = np.argmax(velFor > 0)
         velSin[idxFor:] = velBack[idxFor:]
@@ -301,5 +304,30 @@ class CubesCups(Env):
 
         return state
 
+    def step_chores(self):
+        # 60Hz
+        triggerSim(self.clientID)
+        # Make sure simulation step finishes
+        returnCode, pingTime = sim.simxGetPingTime(self.clientID)
 
+    def rotate_cup(self):
+        ''' Function to rotate cup '''
+        errorCode = sim.simxSetJointTargetVelocity(self.clientID, self.source_cup_handle, self.speed,
+                                                sim.simx_opmode_oneshot)
+        returnCode, self.joint_position = sim.simxGetJointPosition(self.clientID, self.source_cup_handle,
+                                                        sim.simx_opmode_buffer)
 
+    def move_cup(self, action):
+        ''' Function to move the pouring cup laterally during the rotation '''
+        global low, high
+        resolution = 0.001
+        move_x = resolution * action
+        movement = self.source_cup_position[0] + move_x
+        if self.center_position + low < movement < self.center_position + high:
+            self.source_cup_position[0] = movement
+            returnCode = sim.simxSetObjectPosition(self.clientID, self.source_cup_handle, -1,
+                                                self.source_cup_position,
+                                                sim.simx_opmode_blocking)
+
+    def set_state(self):
+        self.state = self.source_cup_position[0]
