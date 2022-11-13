@@ -20,9 +20,34 @@ sys.path.append('MacAPI')
 import numpy as np
 import sim
 
+
 # Max movement along X
 low, high = -0.05, 0.05
 
+learning_rate = 0.1
+discount_rate = 0.99
+#exploration_rate = 1.0 #0.06079027722859994 #0.1466885449377839
+max_exploration_rate = 1.0 #0.06079027722859994 #0.1466885449377839 #0.37786092411182526
+min_exploration_rate = 0.01
+exploration_decay_rate = 0.01
+
+# Set state space and action space sizes
+state_space_size = 100 # Resolution of 0.0002 for 100 per fifth section of the x-axis (-0.5 to 0.5) -> (-500 to 500) -> totaling 1000
+action_space_size = 5 # [-2, -1, 0, 1, 2]
+
+num_episodes = 100
+
+# Actions to move cup laterally
+actions = [-2, -1, 0, 1, 2]
+
+# Lists of possible reward structures
+rewards = [[-5, -3, 2, 5, 2, -3, -5],
+            [-3, 2, 5, 2, -3, -5, -5],
+            [2, 5, 2, -3, -5, -5, -5],
+            [5, 2, -3, -5, -5, -5, -5],
+            [-5, -5, -3, 2, 5, 2, -3],
+            [-5, -5, -5, -3, 2, 5, 2],
+            [-5, -5, -5, -5, -3, 2, 5]]
 
 def setNumberOfBlocks(clientID, blocks, typeOf, mass, blockLength,
                       frictionCube, frictionCup):
@@ -211,137 +236,135 @@ def _wait(clientID):
         triggerSim(clientID)
 
 
-def get_next_state(cur_pos, action):
-    if action == 0:
-        return cur_pos - 1
-    else:
-        return cur_pos + 1
+def update_q_table(q_table, state, action, new_state, reward, low, high, j):
+    # Add 2 to action variable to map correctly to Q-table indices
+    action += 2
+    # Normalize state values for q_table
+    norm_state = normalize(state, low, high)
+    norm_new_state = normalize(new_state, low, high)
+    print(f"state values: {state}, {new_state}, normalized state values: {norm_state}, {norm_new_state}")
+    # Update Q-table for Q(s,a)
+    q_table[norm_state, action] = q_table[norm_state, action] * (1 - learning_rate) + \
+                learning_rate * (reward + discount_rate * np.max(q_table[norm_new_state, :]))
+
+def get_distance_3d(a, b):
+    a_x, a_y, a_z = a[0], a[1], a[2]
+    b_x, b_y, b_z = b[0], b[1], b[2]
+
+    # Negative distance between source cup and receive cup
+    return -math.sqrt((a_x - b_x)**2 + (a_y - b_y)**2 + (a_z - b_z)**2)
+
+def get_reward(rewards, pos, low_x, high_x, res, j):
+
+    if check_range(pos, low_x + 0*res, low_x + 50*res):
+        reward = -5
+    # Closer to receive cup -> less negative reward
+    elif check_range(pos, low_x + 51*res, low_x + 100*res):
+        reward = -3
+    # Where we want the source cup to be -> positive reward
+    elif check_range(pos, low_x + 201*res, low_x + 245*res):
+        reward = 2
+    # Dead center -> very positive reward
+    elif check_range(pos, low_x + 246*res, low_x + 255*res):
+        reward = 5
+    # Where we want the source cup to be -> positive reward
+    elif check_range(pos, low_x + 256*res, low_x + 300*res):
+        reward = 2 
+    # Outer bounds -> less negative reward
+    elif check_range(pos, low_x + 301*res, low_x + 400*res):
+        reward = -3
+    # Outer bounds -> negative reward
+    elif check_range(pos, low_x + 401*res, low_x + 500*res):
+        reward = get_distance_3d()
+    else: 
+        reward = -5
 
 def normalize(val, min_val, max_val):
-    #zi = (xi - min(x)) / max(x) - min(x)) * Q, where Q = 500 (max value in range)
+    #zi = (xi - min(x)) / max(x) - min(x)) * Q, where Q = state_space_size (max value in range)
     #print(f"val: {val}, min_val: {min_val}, max_val: {max_val}")
-    norm_val = ((val - min_val) / (max_val - min_val)) * 500
+    norm_val = ((val - min_val) / (max_val - min_val)) * state_space_size # state space includes source cup position(500) and current frame number(1000)
     #print(f"NORMALIZED VALUE: {norm_val}, ROUNDED: {int(norm_val)}")
     return int(norm_val)
 
+def check_range(val, low, high):
+    #print(f"value: {val}, range: {low} to {high}")
+    return low <= val <= high
 
 def main():
-    rewards_all_episodes = []
-    learning_rate = 0.1
-    discount_rate = 0.99
-    exploration_rate = 0.06079027722859994 #0.1466885449377839 #0.37786092411182526
-    max_exploration_rate = 0.06079027722859994 #0.1466885449377839 #0.37786092411182526
-    min_exploration_rate = 0.01
-    exploration_decay_rate = 0.01
-    num_episodes = 1
-    
     q_table_filename = "q_table.txt"
 
-
-    for episode in range(num_episodes):
-        print(f"Episode {episode}:")
-        # Set rotation velocity randomly
-        rng = np.random.default_rng()
-        velReal = rotation_velocity(rng)
-
-        # Start simulation
-        clientID, source_cup, receive_cup = start_simulation()
-        object_shapes_handles, source_cup_position = get_object_handles(clientID, source_cup)
-
-        # Get initial position of the cups
-        source_position, receive_position = set_cup_initial_position(clientID, source_cup, receive_cup, source_cup_position, rng)
-        _wait(clientID)
-        center_position = source_position[0]
-
-        #state space composed of rotation speed of source cup (1000), position of source cup (max - min = 0.1 -> resolution of 0.001 -> 100 possible positions),
-        #and position of two cubes (2 -> either in the radius of the receiving cup or not?)
-        state_space_size = 2000
-        action_space_size = 5
-        q_table = np.zeros((state_space_size, action_space_size))
-
-        #actions to move cup laterally
-        actions = [-2, -1, 0, 1, 2]
-
-        #map of actions to Q-table indices
-        actions_map = {0:-2, 1:-1, 2:0, 3:1, 4:2}
-
-        # Get starting state
-        cubes_position, source_cup_position = get_state(object_shapes_handles,
-                                                    clientID, source_cup)
         
-        #print(f"cubes pos: {cubes_position}, source_cup_pos: {source_cup_position}")
+    # Set rotation velocity randomly
+    rng = np.random.default_rng()
+    velReal = rotation_velocity(rng)
 
-        state = source_cup_position[0] + 0
+    # Start simulation
+    clientID, source_cup, receive_cup = start_simulation()
+    object_shapes_handles, source_cup_position = get_object_handles(clientID, source_cup)
 
-        # Load Q-table
-        if(os.path.exists(q_table_filename)):
-            q_table = np.loadtxt(q_table_filename)
-        print("Q-table loaded.")
-        
-        for j in range(velReal.shape[0]):
-            # 60HZ
-            triggerSim(clientID)
+    # Get initial position of the cups
+    source_position, receive_position = set_cup_initial_position(clientID, source_cup, receive_cup, source_cup_position, rng)
+    _wait(clientID)
 
-            # Make sure simulation step finishes
-            returnCode, pingTime = sim.simxGetPingTime(clientID)
+    center_position = source_position[0]
 
-            #initialize the speed of this frame
-            speed = velReal[j]
-
-            # Get current state
-            cubes_position, source_cup_position = get_state(object_shapes_handles,
-                                                    clientID, source_cup)
-
-            # Update state and select action
-            state = source_cup_position[0] + j
-
-            #print(f"SPEED: {speed}")
-
-            source_high_x = round(center_position + high, 3)
-            source_low_x = round(center_position + low + 1000, 3)
-
-            norm_state = normalize(state, source_low_x, source_high_x)
-            print(norm_state)
-            action = np.argmax(q_table[norm_state,:]) - 2 #select the largest Q-value
-
-            print(f"action selected: {action}")
-
-            # Rotate cup
-            position = rotate_cup(clientID, speed, source_cup)
-
-            # Move cup laterally
-            move_cup(clientID, source_cup, action, source_cup_position, center_position)
-            
-            # Break if cup goes back to vertical position
-            if j > 10 and position > 0:
-                break
-
-        #end for
-
-        #print(f"Cubes final position: {cubes_position}")
-
-        # Stop simulation
-        stop_simulation(clientID)
-        print("Simulation stopped.")
-
-        receive_x, receive_y, receive_z = receive_position[0], receive_position[1], receive_position[2]
-        source_x, source_y, source_z = source_cup_position[0], source_cup_position[1], source_cup_position[2]
-
-        for cube_position in cubes_position:
-            cube_x, cube_y, cube_z = cube_position[0], cube_position[1], cube_position[2]
-            if (cube_x < receive_x + 0.05 and cube_x > receive_x - 0.05) and \
-             (cube_y < receive_y + 0.05 and cube_y > receive_y - 0.05):
-            # Both cubes are within the radius of the receiving cup
-                flag = 1
-            else: 
-            # Atleast one cube is not within the radius of the receiving cup
-                flag = 0
+    # Get starting state
+    old_cubes_position, old_source_cup_position = get_state(object_shapes_handles,
+                                                clientID, source_cup)
     
-    print("Test finished.")
-    if flag:
-        print("Both cubes made it into the receiving cup.")
-    else:
-        print("Atleast one cube did not make it into the receiving cup.")
+    state = old_source_cup_position[0]
+
+    if(os.path.exists(q_table_filename)):
+        q_table = np.loadtxt(q_table_filename)
+    print("Q-table loaded.")
+
+    rewards_current_episode = 0
+
+    for j in range(velReal.shape[0]):
+        # 60HZ
+        triggerSim(clientID)
+        # Make sure simulation step finishes
+        returnCode, pingTime = sim.simxGetPingTime(clientID)
+
+        #initialize the speed of the source cup at this frame
+        speed = velReal[j]
+
+        # Get current state
+        cubes_position, source_cup_position = get_state(object_shapes_handles,
+                                                clientID, source_cup)
+        
+        # Update state
+        new_state = source_cup_position[0]
+
+        source_low_x = center_position + low
+        source_high_x = center_position + high
+                                                        
+        # Select the largest Q-value
+        norm_state = normalize(state, source_low_x, source_high_x)
+        action = np.argmax(q_table[norm_state,:]) - 2
+        print(action)
+
+        # Rotate cup
+        position = rotate_cup(clientID, speed, source_cup)
+
+        # call move_cup function
+        move_cup(clientID, source_cup, action, source_cup_position, center_position)
+
+        #update state variable
+        state = new_state
+        old_source_cup_position = source_cup_position
+        
+        #print(f"Step {j}, Cubes position: {cubes_position}, Action taken: {action}")
+
+        # Break if cup goes back to vertical position
+        if j > 10 and position > 0:
+            break
+
+    #end for
+        
+    # Stop simulation
+    stop_simulation(clientID)
+    print("Simulation stopped.")
 
 if __name__ == '__main__':
 
