@@ -23,7 +23,7 @@ min_exploration_rate = 0.01
 exploration_decay_rate = 0.01
 
 # Set state space and action space sizes
-state_space_size = 500 # Resolution of 0.0002 for 100 per fifth section of the x-axis (-0.5 to 0.5) -> (-500 to 500) -> totaling 1000
+state_space_size = 1000 # Resolution of 0.0002 for 100 per fifth section of the x-axis (-0.5 to 0.5) -> (-500 to 500) -> totaling 1000
 action_space_size = 5 # [-2, -1, 0, 1, 2]
 
 num_episodes = 100
@@ -74,11 +74,11 @@ def wait_(clientID):
     for _ in range(60):
         triggerSim(clientID)
 
-def update_q_table(q_table, state, action, new_state, reward):
+def update_q_table(q_table, state, action, new_state, reward, offset):
     # Add 2 to action variable to map correctly to Q-table indices
     action += 2
-    norm_state = normalize(state, -0.85 + low, -0.85 + high)
-    norm_new_state = normalize(new_state, -0.85 + low, -0.85 + high)
+    norm_state = normalize(state, -0.85 + low + offset, -0.85 + high + offset)
+    norm_new_state = normalize(new_state, -0.85 + low + offset, -0.85 + high + offset)
     #print(f"state values: {state}, {new_state}, normalized state values: {norm_state}, {norm_new_state}")
     # Update Q-table for Q(s,a)
     q_table[norm_state, action] = q_table[norm_state, action] * (1 - learning_rate) + \
@@ -119,9 +119,13 @@ def get_reward(rewards, pos, low_x, high_x, res, j):
 def normalize(val, min_val, max_val):
     #zi = (xi - min(x)) / max(x) - min(x)) * Q, where Q = state_space_size (max value in range)
     #print(f"val: {val}, min_val: {min_val}, max_val: {max_val}")
-    norm_val = ((val - min_val) / (max_val - min_val)) * state_space_size # state space includes source cup position(500) and current frame number(1000)
+    norm_val = (val - min_val) / (max_val - min_val) * state_space_size # state space includes source cup position(500) and current frame number(1000)
     #print(f"NORMALIZED VALUE: {norm_val}, ROUNDED: {int(norm_val)}")
-    return int(norm_val)
+    
+    if norm_val >= state_space_size:
+        norm_val = state_space_size
+    
+    return int(norm_val-1)
 
 def check_range(val, low, high):
     #print(f"value: {val}, range: {low} to {high}")
@@ -133,12 +137,13 @@ class CubesCups(Env):
         # [-2, -1, 0, 1, 2]
         self.action_space = Discrete(5)
         #speed, source x coordinate
-        self.observation_space = Box(low = 0, high = 500) 
+        self.observation_space = Box(low = 0, high = 1000) 
         self.state = None
         self.total_frames = 1000
         #j in range(velReal.shape[0])
         self.current_frame = 0
         self.speed = None
+        self.offset = None
 
         self.clientID = None
         self.source_cup_handle = None
@@ -155,7 +160,7 @@ class CubesCups(Env):
     def step(self, action):
 
         # Calculate reward as the negative distance between the source up and the receiving cup
-        reward = get_distance_3d(self.source_cup_position, self.receive_cup_position) * 100
+        reward = get_distance_3d(self.source_cup_position, self.receive_cup_position) * 10000
         
         # Rotate cup based on speed value
         self.rotate_cup()
@@ -275,13 +280,14 @@ class CubesCups(Env):
         idxFor = np.argmax(velFor > 0)
         velSin[idxFor:] = velBack[idxFor:]
         velReal = velSin
+
         return velReal
 
     def set_random_cup_position(self, rng):
         # Move cup along x axis
         global low, high
-        move_x = low + (high - low) * rng.random()
-        self.source_cup_position[0] = self.source_cup_position[0] + move_x
+        self.offset = low + (high - low) * rng.random()
+        self.source_cup_position[0] = self.source_cup_position[0] + self.offset
 
         returnCode = sim.simxSetObjectPosition(self.clientID, self.source_cup_handle, -1, self.source_cup_position,
                                             sim.simx_opmode_blocking)
@@ -301,8 +307,10 @@ class CubesCups(Env):
 
         # Set state as the x coordinate of the source cup
         state = self.source_cup_position[0]
-
         return state
+
+    def get_cup_offset(self, rng):
+        return self.offset
 
     def step_chores(self):
         # 60Hz
@@ -331,3 +339,4 @@ class CubesCups(Env):
 
     def set_state(self):
         self.state = self.source_cup_position[0]
+        return self.state
