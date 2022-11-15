@@ -1,5 +1,6 @@
 from gym import Env, utils
 from gym.spaces import Discrete, Box
+from sklearn.preprocessing import KBinsDiscretizer
 
 import sys
 import math
@@ -15,18 +16,18 @@ import sim
 # Max movement along X
 low, high = -0.05, 0.05
 
-learning_rate = 0.1
-discount_rate = 0.99
-exploration_rate = 1.0 #0.06079027722859994 #0.1466885449377839
-max_exploration_rate = 1.0 #0.06079027722859994 #0.1466885449377839 #0.37786092411182526
+learning_rate = 0.1 #0.1
+discount_rate = 0.99 #0.60
+exploration_rate = 1.0 #0.05978456235635595 #0.1466885449377839
+max_exploration_rate = 1.0 #0.05978456235635595 #0.1466885449377839 #0.37786092411182526
 min_exploration_rate = 0.01
 exploration_decay_rate = 0.01
 
 # Set state space and action space sizes
-state_space_size = 1000 # Resolution of 0.0002 for 100 per fifth section of the x-axis (-0.5 to 0.5) -> (-500 to 500) -> totaling 1000
+state_space_size = 7000 # 1000 + 50 + 50 (-0.05 to 0.05)
 action_space_size = 5 # [-2, -1, 0, 1, 2]
 
-num_episodes = 100
+num_episodes = 10
 
 # Actions to move cup laterally
 actions = [-2, -1, 0, 1, 2]
@@ -74,16 +75,6 @@ def wait_(clientID):
     for _ in range(60):
         triggerSim(clientID)
 
-def update_q_table(q_table, state, action, new_state, reward, offset):
-    # Add 2 to action variable to map correctly to Q-table indices
-    action += 2
-    norm_state = normalize(state, -0.85 + low + offset, -0.85 + high + offset)
-    norm_new_state = normalize(new_state, -0.85 + low + offset, -0.85 + high + offset)
-    #print(f"state values: {state}, {new_state}, normalized state values: {norm_state}, {norm_new_state}")
-    # Update Q-table for Q(s,a)
-    q_table[norm_state, action] = q_table[norm_state, action] * (1 - learning_rate) + \
-                learning_rate * (reward + discount_rate * np.max(q_table[norm_new_state, :]))
-
 def get_distance_3d(a, b):
     a_x, a_y, a_z = a[0], a[1], a[2]
     b_x, b_y, b_z = b[0], b[1], b[2]
@@ -118,14 +109,10 @@ def get_reward(rewards, pos, low_x, high_x, res, j):
 
 def normalize(val, min_val, max_val):
     #zi = (xi - min(x)) / max(x) - min(x)) * Q, where Q = state_space_size (max value in range)
-    #print(f"val: {val}, min_val: {min_val}, max_val: {max_val}")
-    norm_val = (val - min_val) / (max_val - min_val) * state_space_size # state space includes source cup position(500) and current frame number(1000)
+    #print(f"val: {val}, min_val: {min_val*1000}, max_val: {max_val*1000}")
+    norm_val = (val - min_val) / (max_val - min_val) * 100# state space includes source cup position(500) and current frame number(1000)
     #print(f"NORMALIZED VALUE: {norm_val}, ROUNDED: {int(norm_val)}")
-    
-    if norm_val >= state_space_size:
-        norm_val = state_space_size
-    
-    return int(norm_val-1)
+    return norm_val
 
 def check_range(val, low, high):
     #print(f"value: {val}, range: {low} to {high}")
@@ -134,10 +121,25 @@ def check_range(val, low, high):
 
 class CubesCups(Env):
     def __init__(self):
+        #500 for source_x, 100 for speed
+        self.bins = (500, 100)
         # [-2, -1, 0, 1, 2]
         self.action_space = Discrete(5)
-        #speed, source x coordinate
-        self.observation_space = Box(low = 0, high = 1000) 
+        # Observation space has to be discrete in order to work with Q-table
+        # Discretize state space values
+        self.source_x_low = -0.80 + low
+        self.source_x_high = -0.80 + high
+        self.velReal_low = -0.7361215932167728
+        self.velReal_high = 0.8499989492543077 
+
+        self.lower_bounds = np.array([self.source_x_low, self.velReal_low])
+        self.upper_bounds = np.array([self.source_x_high, self.velReal_high])
+        self.observation_space = Box(low, high) 
+
+        # Initialize Q-table
+        #q_table = np.zeros((state_space_size, action_space_size))
+        self.q_table = np.zeros(self.bins + (self.action_space.n,))
+
         self.state = None
         self.total_frames = 1000
         #j in range(velReal.shape[0])
@@ -149,10 +151,10 @@ class CubesCups(Env):
         self.source_cup_handle = None
         self.receive_cup_handle = None
         self.cubes_handles = []
-
+        
         self.source_cup_position = None
         self.receive_cup_position = None
-        self.cubes_position = []
+        self.cubes_positions = []
         self.center_position = None
         self.joint_position = None
 
@@ -160,30 +162,66 @@ class CubesCups(Env):
     def step(self, action):
 
         # Calculate reward as the negative distance between the source up and the receiving cup
-        reward = get_distance_3d(self.source_cup_position, self.receive_cup_position) * 10000
-        
+        reward = get_distance_3d(self.source_cup_position, self.receive_cup_position) * 1000
+
+        r_x, r_y = self.receive_cup_position[0], self.receive_cup_position[1]
+        flag = 0
+        for cube_pos in self.cubes_positions:
+            cube_x, cube_y, cube_z = cube_pos[0], cube_pos[1], cube_pos[2]
+            # Cubes are in the receive cube
+            if (cube_x < r_x + 0.04 and cube_x > r_x - 0.04) and (cube_y < r_y + 0.04 and cube_y > r_y - 0.04 \
+                    and (cube_z > 0.20 and cube_z < 0.60)):
+                flag += 1                
+            elif((cube_x < r_x + 0.04 and cube_x > r_x - 0.04) and (cube_z > 0.60)):
+            # Cubes are within the x bounds of the receive cup (on trajectory to make it into the receive cup)
+                reward += 250
+        # Give big reward for both cubes landing in the receive cup            
+        if flag == 2:
+            reward += 1000
+    
         # Rotate cup based on speed value
         self.rotate_cup()
         # Move cup laterally based on selected action in Q-table
         self.move_cup(action)
 
+        # Get the position of both cubes
+        for cube, i in zip(self.cubes_handles, range(0, 2)):
+            returnCode, cube_position = sim.simxGetObjectPosition(
+                self.clientID, cube, -1, sim.simx_opmode_streaming)
+            self.cubes_positions[i] = cube_position
 
-        if self.current_frame > 10 and self.joint_position > 0:
+        '''if self.current_frame > 10 and self.joint_position > 0:
             done = True
         else:
-            done = False
-        
+            done = False'''
+
+        # Keep track of current frame number
         self.current_frame += 1
 
         info = {}
-
-        self.set_state()
+        # Get state after step completed, to return
+        self.state = np.array([self.source_cup_position[0], self.speed])
 
         #Return step info
-        return self.state, reward, done, info
+        return self.state, reward, info
 
     def reset(self, rng):
-        return self.set_random_cup_position(rng)
+        # Reset source cup position (sets self.source_cup_position, 
+        # self.receive_cup_position, and self.center_positions)
+        self.cubes_handles = []
+        self.cubes_positions = []
+        self.set_random_cup_position(rng)
+        # Current frame is j
+        self.current_frame = 0
+        # Speed is velReal[j]
+        self.speed = 0
+        #self.clientID = None
+        self.joint_position = None
+
+        # Update state for new episode
+        self.state = np.array([self.source_cup_position[0], self.speed])
+
+        return self.state
 
     def render(self, action, reward):
         pass
@@ -223,7 +261,7 @@ class CubesCups(Env):
             self.clientID, self.source_cup_handle, sim.simx_opmode_streaming)
 
         #get object handles
-        self.get_handles()
+        self.get_cubes()
 
     def stop_simulation(self):
         ''' Function to stop the episode '''
@@ -231,7 +269,7 @@ class CubesCups(Env):
         sim.simxFinish(self.clientID)
         print("Simulation stopped.")
 
-    def get_handles(self):
+    def get_cubes(self):
         # Drop blocks in source container
         triggerSim(self.clientID)
         number_of_blocks = 2
@@ -251,18 +289,15 @@ class CubesCups(Env):
             res, obj_handle = sim.simxGetObjectHandle(self.clientID,
                                                     f'{obj_type}{cube}',
                                                     sim.simx_opmode_blocking)
-            self.cubes_handles.append(cube)
+            self.cubes_handles.append(obj_handle)
 
         triggerSim(self.clientID)
 
         for cube in self.cubes_handles:
-            # get the starting position of source
+            # get the starting position of cubes
             returnCode, cube_position = sim.simxGetObjectPosition(
                 self.clientID, cube, -1, sim.simx_opmode_streaming)
-
-        returnCode, self.source_cup_position = sim.simxGetObjectPosition(
-            self.clientID, self.source_cup_handle, -1, sim.simx_opmode_buffer)
-        print(f'Source Cup Initial Position:{self.source_cup_position}')
+            self.cubes_positions.append(cube_position)
         
         # Give time for the cubes to finish falling
         wait_(self.clientID)
@@ -276,17 +311,27 @@ class CubesCups(Env):
         ts = np.linspace(0, 1000 / freq, 1000)
         velFor = rng.choice(forward) * np.sin(2 * np.pi * 1 / 20 * ts)
         velBack = rng.choice(backward) * np.sin(2 * np.pi * 1 / 10 * ts)
+
+        #print(f"velFor: {velFor}\n\n\nvelBack: {velBack}")
         velSin = velFor
         idxFor = np.argmax(velFor > 0)
         velSin[idxFor:] = velBack[idxFor:]
         velReal = velSin
+        #print(f"velFor min: {np.min(velFor)} velBack max: {np.max(velBack)}")
+        print(f"velreal min: {np.min(velReal)}, velreal max: {np.max(velReal)}")
 
         return velReal
 
     def set_random_cup_position(self, rng):
+        # Print source cup position before random move
+        returnCode, self.source_cup_position = sim.simxGetObjectPosition(
+            self.clientID, self.source_cup_handle, -1, sim.simx_opmode_buffer)
+        print(f'Source Cup Initial Position:{self.source_cup_position}')
+
         # Move cup along x axis
         global low, high
-        self.offset = low + (high - low) * rng.random()
+        rng_var = rng.random()
+        self.offset = low + (high - low) * rng_var
         self.source_cup_position[0] = self.source_cup_position[0] + self.offset
 
         returnCode = sim.simxSetObjectPosition(self.clientID, self.source_cup_handle, -1, self.source_cup_position,
@@ -301,13 +346,23 @@ class CubesCups(Env):
             self.clientID, self.receive_cup_handle, -1, sim.simx_opmode_buffer)
         print(f'Receiving cup position:{self.receive_cup_position}')
 
+        obj_type = "Cuboid"
+        number_of_blocks = 2
+        for cube in range(number_of_blocks):
+            res, obj_handle = sim.simxGetObjectHandle(self.clientID,
+                                                    f'{obj_type}{cube}',
+                                                    sim.simx_opmode_blocking)
+            self.cubes_handles.append(obj_handle)
+
+        for cube in self.cubes_handles:
+            # get the starting position of cubes
+            returnCode, cube_position = sim.simxGetObjectPosition(
+                self.clientID, cube, -1, sim.simx_opmode_streaming)
+            self.cubes_positions.append(cube_position)
+
         wait_(self.clientID)
 
         self.center_position = self.source_cup_position[0]
-
-        # Set state as the x coordinate of the source cup
-        state = self.source_cup_position[0]
-        return state
 
     def get_cup_offset(self, rng):
         return self.offset
@@ -337,6 +392,45 @@ class CubesCups(Env):
                                                 self.source_cup_position,
                                                 sim.simx_opmode_blocking)
 
-    def set_state(self):
-        self.state = self.source_cup_position[0]
-        return self.state
+    def discretize_state(self, obs):
+        print(f"observation to be discretized: {obs}")
+        discretized = list()
+        for i in range(len(obs)):
+            scaling = ((obs[i] + abs(self.lower_bounds[i]))
+                / (self.upper_bounds[i] - self.lower_bounds[i]))
+            new_obs = int(round((self.bins[i] - 1) * scaling))
+            new_obs = min(self.bins[i] - 1, max(0, new_obs))
+            discretized.append(new_obs)
+        return tuple(discretized)
+
+    def update_q(self, state, action, new_state, reward):
+        # Add 2 to action variable to map correctly to Q-table indices
+        action += 2
+        #print(f"action update q: {action}")
+        # Update Q-table for Q(s,a)
+        #q_table[state][action] = q_table[state][action] * (1 - learning_rate) + \
+        #            learning_rate * (reward + discount_rate * np.max(q_table[new_state]))
+        #print(f"new_state: {new_state}, state: {state}")
+        #print(f"q_table[new_state]: {self.q_table[new_state]}, \nq_table[state][action]: {self.q_table[state][action]}")
+        self.q_table[state][action] += (learning_rate *
+                    (reward
+                    + discount_rate * np.max(self.q_table[new_state])
+                    - self.q_table[state][action]))
+    
+    def pick_action(self, state):
+        #Exploration-exploitation trade-off
+        exploration_rate_threshold = np.random.uniform(0, 1)
+        # If exploitation is picked, select action where max Q-value exists within state's row in the q-table
+        if exploration_rate_threshold > exploration_rate:
+            # Select the largest Q-value
+            #norm = normalize(norm_state, norm_low, norm_high)# -0.85 + low + offset, -0.85 + high + offset)
+            return np.argmax(self.q_table[state]) - 2
+        # If exploration is picked, select a random action from the current state's row in the q-table
+        else:
+            return self.action_space.sample() - 2
+            #print(f"action: {action}")
+
+    '''def get_state(self):
+        #self.state = math.floor(self.source_cup_position[0] * -1000) + (self.current_frame * 5)
+        state = np.array([self.source_cup_position[0], self.speed])
+        return state'''

@@ -20,9 +20,13 @@ def main():
     rewards_filename = "rewards_history.txt"
     q_table_filename = "q_table.txt"
 
-    # Initialize Q-table
-    q_table = np.zeros((state_space_size, action_space_size))
-    #q_table = np.zeros((env.observation_space.n, env.action_space.n))
+    #source_x_low = -0.80 + low
+    #source_x_high = -0.80 + high
+    #velReal_low = -0.7361215932167728
+    #velReal_high = 0.8499989492543077 
+    #sect = np.linspace(-0.80 + low, -0.80 + high, 500)
+    #sect2 = np.linspace(velReal_low, velReal_high, 500)
+    #print(sect2)
 
     for episode in range(num_episodes):
         print(f"Episode {episode+1}:")
@@ -36,14 +40,16 @@ def main():
 
         # Set initial position of the source cup
             # State is x coordinate of source cup
-        state = env.reset(rng)
+        state = env.discretize_state(env.reset(rng))
+        print(f"state: {state}")
         done = False
         # Keep track of rewards for each episode, to be stored in a list for analysis
         rewards_current_episode = 0
 
         # Get source cup offset
-        offset = env.get_cup_offset(rng)
-        
+        #offset = env.get_cup_offset(rng)
+        #print(f"offset: {offset}")
+
         if(os.path.exists(q_table_filename)):
             q_table = np.loadtxt(q_table_filename)
         print("Q-table loaded.")
@@ -52,35 +58,36 @@ def main():
             env.step_chores()
             # Initialize the speed of the source cup at this frame
             env.speed = velReal[j]
+            print(env.speed)
+            # Offset is in range (-0.05, 0.05) -> -1000 will always normalize to positive value
+            #norm_low = math.floor((-0.85 + low + offset) * -1000)
+            #norm_high = math.floor((-0.85 + high + offset) * -1000)
 
-            #Exploration-exploitation trade-off
-            exploration_rate_threshold = np.random.uniform(0, 1)
-            # If exploitation is picked, select action where max Q-value exists within state's row in the q-table
-            if exploration_rate_threshold > exploration_rate:
-                # Select the largest Q-value
-                norm_state = normalize(state, -0.85 + low + offset, -0.85 + high + offset)
-                action = np.argmax(q_table[norm_state,:]) - 2
-            # If exploration is picked, select a random action from the current state's row in the q-table
-            else:
-                action = env.action_space.sample() - 2
+            action = env.pick_action(state)
 
+            #print(f"norm_low: {norm_low}, norm_high: {norm_high}, norm_state: {norm_state}")
+            
+            #print(f"HERE: {-0.85 + low + offset}, {-0.85 + high + offset}")
             #Take next action
-            new_state, reward, done, info = env.step(action)
+            obs, reward, info = env.step(action)
 
-            print(offset)
+            new_state = env.discretize_state(obs)
+            
+            #print(offset)
             # Update Q-table for Q(s,a)
-            print(f"STATE: {normalize(state, -0.85 + low + offset, -0.85 + high + offset)}, REWARD: {reward}, ACTION: {action}")
-            update_q_table(q_table, state, action, new_state, reward, offset)
+            #print(f"velReal[j]: {velReal[j]}, source_pos: {env.source_cup_position[0]}")
+            print(f"STATE: {state}, new_state: {new_state} REWARD: {reward}, ACTION: {action}")
+            env.update_q(state, action, new_state, reward)
 
             #update state variable
             state = new_state
             rewards_current_episode += reward
-
-            print(f"state: {state}, new_state: {new_state}")
             
             # Break if cup goes back to vertical position
-            if done == True:
+            '''if done == True:
                 print("done")
+                break'''
+            if j > 10 and env.joint_position > 0:
                 break
         #end for
 
