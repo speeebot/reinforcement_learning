@@ -20,12 +20,6 @@ def main():
     rewards_filename = "rewards_history.txt"
     q_table_filename = "q_table.pkl"
 
-    # Load q_table.pkl for updating, if it exists
-    if(os.path.exists("q_table.pkl")):
-        with open('q_table.pkl', 'rb') as f:
-            env.q_table = pickle.load(f)
-        print("Q-table loaded.")
-
     for episode in range(env.num_episodes):
         print(f"Episode {episode+1}:")
 
@@ -48,9 +42,11 @@ def main():
         #offset = env.get_cup_offset(rng)
         #print(f"offset: {offset}")
 
-        if(os.path.exists(q_table_filename)):
-            q_table = np.loadtxt(q_table_filename)
-        print("Q-table loaded.")
+        # Load q_table.pkl for updating, if it exists
+        if(os.path.exists("q_table.pkl")):
+            with open('q_table.pkl', 'rb') as f:
+                env.q_table = pickle.load(f)
+            print("Q-table loaded.")
 
         for j in range(velReal.shape[0]):
             env.step_chores()
