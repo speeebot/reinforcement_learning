@@ -18,17 +18,15 @@ def main():
     global exploration_rate
     rewards_all_episodes = []
     rewards_filename = "rewards_history.txt"
-    q_table_filename = "q_table.txt"
+    q_table_filename = "q_table.pkl"
 
-    #source_x_low = -0.80 + low
-    #source_x_high = -0.80 + high
-    #velReal_low = -0.7361215932167728
-    #velReal_high = 0.8499989492543077 
-    #sect = np.linspace(-0.80 + low, -0.80 + high, 500)
-    #sect2 = np.linspace(velReal_low, velReal_high, 500)
-    #print(sect2)
+    # Load q_table.pkl for updating, if it exists
+    if(os.path.exists("q_table.pkl")):
+        with open('q_table.pkl', 'rb') as f:
+            env.q_table = pickle.load(f)
+        print("Q-table loaded.")
 
-    for episode in range(num_episodes):
+    for episode in range(env.num_episodes):
         print(f"Episode {episode+1}:")
 
         # Set rotation velocity randomly
@@ -58,10 +56,8 @@ def main():
             env.step_chores()
             # Initialize the speed of the source cup at this frame
             env.speed = velReal[j]
-            print(env.speed)
-            # Offset is in range (-0.05, 0.05) -> -1000 will always normalize to positive value
-            #norm_low = math.floor((-0.85 + low + offset) * -1000)
-            #norm_high = math.floor((-0.85 + high + offset) * -1000)
+            env.learning_rate = env.get_learning_rate(j)
+            env.epsilon = env.get_epsilon(j)
 
             action = env.pick_action(state)
 
@@ -75,12 +71,13 @@ def main():
             
             #print(offset)
             # Update Q-table for Q(s,a)
-            #print(f"velReal[j]: {velReal[j]}, source_pos: {env.source_cup_position[0]}")
             print(f"STATE: {state}, new_state: {new_state} REWARD: {reward}, ACTION: {action}")
             env.update_q(state, action, new_state, reward)
 
             #update state variable
             state = new_state
+
+            # Keep track of rewards for current episode
             rewards_current_episode += reward
             
             # Break if cup goes back to vertical position
@@ -93,20 +90,16 @@ def main():
 
         # Stop simulation
         env.stop_simulation()
-
-        #Exploration rate decay
-        exploration_rate = min_exploration_rate + \
-            (max_exploration_rate - min_exploration_rate) * np.exp(-exploration_decay_rate*episode)
         
         #Append current episode's reward to total rewards list for later
         rewards_all_episodes.append(rewards_current_episode)
 
-        np.savetxt(q_table_filename, q_table)
+        with open(q_table_filename, 'wb') as f:
+            pickle.dump(env.q_table, f)
         print(f"Q-table saved to {q_table_filename}")
 
     np.savetxt(rewards_filename, rewards_all_episodes)
     print(f"Saved rewards for each episode to {rewards_filename}")
-    print(f"Final exploration rate: {exploration_rate}")
 
 if __name__ == '__main__':
 

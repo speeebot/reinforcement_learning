@@ -16,22 +16,6 @@ import sim
 # Max movement along X
 low, high = -0.05, 0.05
 
-learning_rate = 0.1 #0.1
-discount_rate = 0.99 #0.60
-exploration_rate = 1.0 #0.05978456235635595 #0.1466885449377839
-max_exploration_rate = 1.0 #0.05978456235635595 #0.1466885449377839 #0.37786092411182526
-min_exploration_rate = 0.01
-exploration_decay_rate = 0.01
-
-# Set state space and action space sizes
-state_space_size = 7000 # 1000 + 50 + 50 (-0.05 to 0.05)
-action_space_size = 5 # [-2, -1, 0, 1, 2]
-
-num_episodes = 10
-
-# Actions to move cup laterally
-actions = [-2, -1, 0, 1, 2]
-
 
 def setNumberOfBlocks(clientID, blocks, typeOf, mass, blockLength,
                       frictionCube, frictionCup):
@@ -120,7 +104,10 @@ def check_range(val, low, high):
 
 
 class CubesCups(Env):
-    def __init__(self):
+    def __init__(self, num_episodes=300,
+                min_lr=0.1, min_epsilon=0.1, 
+                discount=1.0, decay=25):
+
         #500 for source_x, 100 for speed
         self.bins = (500, 100)
         # [-2, -1, 0, 1, 2]
@@ -132,7 +119,7 @@ class CubesCups(Env):
         self.velReal_low = -0.7361215932167728
         self.velReal_high = 0.8499989492543077 
 
-        self.lower_bounds = np.array([self.source_x_low, self.velReal_low])
+        self.lower_bounds = np.array([self.source_x_low+low, self.velReal_low+high])
         self.upper_bounds = np.array([self.source_x_high, self.velReal_high])
         self.observation_space = Box(low, high) 
 
@@ -145,7 +132,6 @@ class CubesCups(Env):
         #j in range(velReal.shape[0])
         self.current_frame = 0
         self.speed = None
-        self.offset = None
 
         self.clientID = None
         self.source_cup_handle = None
@@ -158,6 +144,11 @@ class CubesCups(Env):
         self.center_position = None
         self.joint_position = None
 
+        self.num_episodes = num_episodes
+        self.min_lr = min_lr
+        self.min_epsilon = min_epsilon
+        self.discount = discount
+        self.decay = decay
 
     def step(self, action):
 
@@ -330,9 +321,8 @@ class CubesCups(Env):
 
         # Move cup along x axis
         global low, high
-        rng_var = rng.random()
-        self.offset = low + (high - low) * rng_var
-        self.source_cup_position[0] = self.source_cup_position[0] + self.offset
+        move_x = low + (high - low) * rng.random()
+        self.source_cup_position[0] = self.source_cup_position[0] + move_x
 
         returnCode = sim.simxSetObjectPosition(self.clientID, self.source_cup_handle, -1, self.source_cup_position,
                                             sim.simx_opmode_blocking)
@@ -412,25 +402,23 @@ class CubesCups(Env):
         #            learning_rate * (reward + discount_rate * np.max(q_table[new_state]))
         #print(f"new_state: {new_state}, state: {state}")
         #print(f"q_table[new_state]: {self.q_table[new_state]}, \nq_table[state][action]: {self.q_table[state][action]}")
-        self.q_table[state][action] += (learning_rate *
+        self.q_table[state][action] += (self.learning_rate *
                     (reward
-                    + discount_rate * np.max(self.q_table[new_state])
+                    + self.discount * np.max(self.q_table[new_state])
                     - self.q_table[state][action]))
     
     def pick_action(self, state):
         #Exploration-exploitation trade-off
-        exploration_rate_threshold = np.random.uniform(0, 1)
-        # If exploitation is picked, select action where max Q-value exists within state's row in the q-table
-        if exploration_rate_threshold > exploration_rate:
-            # Select the largest Q-value
-            #norm = normalize(norm_state, norm_low, norm_high)# -0.85 + low + offset, -0.85 + high + offset)
-            return np.argmax(self.q_table[state]) - 2
         # If exploration is picked, select a random action from the current state's row in the q-table
-        else:
+        if (np.random.random() < self.epsilon):
+            # Select the largest Q-value
             return self.action_space.sample() - 2
-            #print(f"action: {action}")
+        # If exploitation is picked, select action where max Q-value exists within state's row in the q-table
+        else:
+            return np.argmax(self.q_table[state]) - 2
 
-    '''def get_state(self):
-        #self.state = math.floor(self.source_cup_position[0] * -1000) + (self.current_frame * 5)
-        state = np.array([self.source_cup_position[0], self.speed])
-        return state'''
+    def get_learning_rate(self, t):
+        return max(self.min_lr, min(1., 1. - math.log10((t + 1) / self.decay)))
+    
+    def get_epsilon(self, t):
+        return max(self.min_epsilon, min(1., 1. - math.log10((t + 1) / self.decay)))
