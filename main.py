@@ -1,5 +1,5 @@
 """
-    This code communicated with the coppeliaSim simulation and simulates pouring aiming to a destination container
+    This code communicates with the coppeliaSim simulation and simulates pouring aiming to a destination container
     
     WINDOWS:
     ./Applications/coppeliaSim.app/Contents/MacOSMacOS/coppeliaSim -gREMOTEAPISERVERSERVICE_19000_FALSE_TRUE ~/path/to/file/2cups_Intro_to_AI.ttt
@@ -17,5 +17,4 @@ def main():
     env.train()
 
 if __name__ == '__main__':
-
     main()
