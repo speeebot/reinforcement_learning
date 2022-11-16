@@ -63,6 +63,9 @@ def main():
             #Take next action
             obs, reward, info = env.step(action)
 
+            # Normalize speed value for q_table
+            env.speed = env.normalize(velReal[j], env.velReal_low, env.velReal_high)
+
             new_state = env.discretize_state(obs)
             
             #print(offset)

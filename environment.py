@@ -91,13 +91,6 @@ def get_reward(rewards, pos, low_x, high_x, res, j):
     else: 
         reward = -5
 
-def normalize(val, min_val, max_val):
-    #zi = (xi - min(x)) / max(x) - min(x)) * Q, where Q = state_space_size (max value in range)
-    #print(f"val: {val}, min_val: {min_val*1000}, max_val: {max_val*1000}")
-    norm_val = (val - min_val) / (max_val - min_val) * 100# state space includes source cup position(500) and current frame number(1000)
-    #print(f"NORMALIZED VALUE: {norm_val}, ROUNDED: {int(norm_val)}")
-    return norm_val
-
 def check_range(val, low, high):
     #print(f"value: {val}, range: {low} to {high}")
     return low <= val <= high
@@ -108,14 +101,14 @@ class CubesCups(Env):
                 min_lr=0.1, min_epsilon=0.1, 
                 discount=1.0, decay=25):
 
-        #500 for source_x, 100 for speed
-        self.bins = (500, 100)
+        #1000 for source_x, 100 for speed
+        self.bins = (1000, 100)
         # [-2, -1, 0, 1, 2]
         self.action_space = Discrete(5)
         # Observation space has to be discrete in order to work with Q-table
         # Discretize state space values
-        self.source_x_low = -0.80 + low
-        self.source_x_high = -0.80 + high
+        self.source_x_low = -0.85 + low
+        self.source_x_high = -0.85 + high
         self.velReal_low = -0.7361215932167728
         self.velReal_high = 0.8499989492543077 
 
@@ -172,6 +165,7 @@ class CubesCups(Env):
     
         # Rotate cup based on speed value
         self.rotate_cup()
+
         # Move cup laterally based on selected action in Q-table
         self.move_cup(action)
 
@@ -392,6 +386,12 @@ class CubesCups(Env):
             new_obs = min(self.bins[i] - 1, max(0, new_obs))
             discretized.append(new_obs)
         return tuple(discretized)
+
+    def normalize(self, val, min_val, max_val):
+        # norm_i = (x_i - min(x)) / max(x) - min(x)) * Q
+        # Normalize values between 0 and Q = 100
+        norm_val = (val - min_val) / (max_val - min_val) * 100
+        return norm_val
 
     def update_q(self, state, action, new_state, reward):
         # Add 2 to action variable to map correctly to Q-table indices
