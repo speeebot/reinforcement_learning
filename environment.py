@@ -69,9 +69,9 @@ def get_distance_3d(a, b):
 
 
 class CubesCups(Env):
-    def __init__(self, num_episodes=100,
+    def __init__(self, num_episodes=500,
                 min_lr=0.1, min_epsilon=0.1, 
-                discount=1.0, decay=25):
+                discount=0.99, decay=25):
 
         #1000 for source_x, 100 for speed
         self.bins = (1000, 100)
@@ -488,7 +488,7 @@ class CubesCups(Env):
     def run(self):
         t = 0
         done = False
-        q_table_filename = "q_table2.npy"
+        q_table_filename = "q_table.npy"
 
         # Load q_table.pkl for updating, if it exists
         if(os.path.exists(q_table_filename)):
