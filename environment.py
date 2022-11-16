@@ -10,6 +10,7 @@ import pickle
 
 sys.path.append('MacAPI')
 import numpy as np
+np.set_printoptions(threshold=sys.maxsize)
 import sim
 
 
@@ -66,38 +67,9 @@ def get_distance_3d(a, b):
     # Negative distance between source cup and receive cup
     return -math.sqrt((a_x - b_x)**2 + (a_y - b_y)**2 + (a_z - b_z)**2)
 
-def get_reward(rewards, pos, low_x, high_x, res, j):
-
-    if check_range(pos, low_x + 0*res, low_x + 50*res):
-        reward = -5
-    # Closer to receive cup -> less negative reward
-    elif check_range(pos, low_x + 51*res, low_x + 100*res):
-        reward = -3
-    # Where we want the source cup to be -> positive reward
-    elif check_range(pos, low_x + 201*res, low_x + 245*res):
-        reward = 2
-    # Dead center -> very positive reward
-    elif check_range(pos, low_x + 246*res, low_x + 255*res):
-        reward = 5
-    # Where we want the source cup to be -> positive reward
-    elif check_range(pos, low_x + 256*res, low_x + 300*res):
-        reward = 2 
-    # Outer bounds -> less negative reward
-    elif check_range(pos, low_x + 301*res, low_x + 400*res):
-        reward = -3
-    # Outer bounds -> negative reward
-    elif check_range(pos, low_x + 401*res, low_x + 500*res):
-        reward = get_distance_3d()
-    else: 
-        reward = -5
-
-def check_range(val, low, high):
-    #print(f"value: {val}, range: {low} to {high}")
-    return low <= val <= high
-
 
 class CubesCups(Env):
-    def __init__(self, num_episodes=300,
+    def __init__(self, num_episodes=100,
                 min_lr=0.1, min_epsilon=0.1, 
                 discount=1.0, decay=25):
 
@@ -107,12 +79,14 @@ class CubesCups(Env):
         self.action_space = Discrete(5)
         # Observation space has to be discrete in order to work with Q-table
         # Discretize state space values
-        self.source_x_low = -0.85 + low
-        self.source_x_high = -0.85 + high
+        self.source_x_low = -0.95 # -0.85 + low
+        self.source_x_high = -0.75 # -0.85 + high
         self.velReal_low = -0.7361215932167728
         self.velReal_high = 0.8499989492543077 
 
-        self.lower_bounds = np.array([self.source_x_low+low, self.velReal_low+high])
+        print(f"min: {self.source_x_low}, max: {self.source_x_high}")
+
+        self.lower_bounds = np.array([self.source_x_low, self.velReal_low])
         self.upper_bounds = np.array([self.source_x_high, self.velReal_high])
         self.observation_space = Box(low, high) 
 
@@ -143,11 +117,15 @@ class CubesCups(Env):
         self.discount = discount
         self.decay = decay
 
+        self.cur_distance = None
+        self.prev_distance = None
+
     def step(self, action):
 
         # Calculate reward as the negative distance between the source up and the receiving cup
-        reward = get_distance_3d(self.source_cup_position, self.receive_cup_position) * 1000
-
+        #self.prev_distance = self.cur_distance
+        #self.cur_distance = get_distance_3d(self.source_cup_position, self.receive_cup_position) * 1000
+        '''
         r_x, r_y = self.receive_cup_position[0], self.receive_cup_position[1]
         flag = 0
         for cube_pos in self.cubes_positions:
@@ -162,10 +140,19 @@ class CubesCups(Env):
         # Give big reward for both cubes landing in the receive cup            
         if flag == 2:
             reward += 1000
+        '''
+
+        '''if self.cur_distance < self.prev_distance:
+            reward = 1
+        elif self.cur_distance == self.prev_distance:
+            reward = 0
+        else:
+            reward = -1'''
+
+        reward = get_distance_3d(self.source_cup_position, self.receive_cup_position)
     
         # Rotate cup based on speed value
         self.rotate_cup()
-
         # Move cup laterally based on selected action in Q-table
         self.move_cup(action)
 
@@ -175,10 +162,7 @@ class CubesCups(Env):
                 self.clientID, cube, -1, sim.simx_opmode_streaming)
             self.cubes_positions[i] = cube_position
 
-        '''if self.current_frame > 10 and self.joint_position > 0:
-            done = True
-        else:
-            done = False'''
+        done = bool(self.current_frame > 10 and self.joint_position > 0)
 
         # Keep track of current frame number
         self.current_frame += 1
@@ -188,7 +172,7 @@ class CubesCups(Env):
         self.state = np.array([self.source_cup_position[0], self.speed])
 
         #Return step info
-        return self.state, reward, info
+        return self.state, reward, done, info
 
     def reset(self, rng):
         # Reset source cup position (sets self.source_cup_position, 
@@ -205,8 +189,88 @@ class CubesCups(Env):
 
         # Update state for new episode
         self.state = np.array([self.source_cup_position[0], self.speed])
+        # Set cur distance between source cup and receive cup for reward calculation
+        self.cur_distance = get_distance_3d(self.source_cup_position, self.receive_cup_position) * 1000
 
         return self.state
+
+    def train(self):
+        rewards_all_episodes = []
+        rewards_filename = "rewards_history.txt"
+        q_table_filename = "q_table.npy"
+
+        # Load q_table.pkl for updating, if it exists
+        '''if(os.path.exists(q_table_filename)):
+            with open(q_table_filename, 'rb') as f:
+                self.q_table = np.load(f)
+            print("Q-table loaded.")'''
+
+        for e in range(self.num_episodes):
+            print(f"Episode {e+1}:")
+
+            # Set rotation velocity randomly
+            rng = np.random.default_rng()
+            velReal = self.rotation_velocity(rng)
+
+            # Start simulation, process objects/handles
+            self.start_simulation()
+
+            # Set initial position of the source cup and initialize state
+            state = self.discretize_state(self.reset(rng))
+
+            self.learning_rate = self.get_learning_rate(e)
+            self.epsilon = self.get_epsilon(e)
+            done = False
+            # Keep track of rewards for each episode, to be stored in a list for analysis
+            rewards_current_episode = 0
+
+            for j in range(velReal.shape[0]):
+                self.step_chores()
+                # Initialize the speed of the source cup at this frame
+                self.speed = velReal[j]
+
+                # Pick next action, greedy epsilon
+                action = self.pick_action(state)
+
+                # Take next action
+                obs, reward, done, _ = self.step(action)
+
+                # Normalize speed value for q_table
+                self.speed = self.normalize(velReal[j], self.velReal_low, self.velReal_high)
+                # Calculate new state, continuous -> discrete
+                new_state = self.discretize_state(obs)
+            
+                # Update Q-table for Q(s,a)
+                print(f"source pos: {self.source_cup_position[0]}")
+                print(f"STATE: {state}, new_state: {new_state} REWARD: {reward}, ACTION: {action}")
+                self.update_q(state, action, new_state, reward)
+
+                # Update state variable
+                state = new_state
+
+                # Keep track of rewards for current episode
+                rewards_current_episode += reward
+                
+                # Break if cup goes back to vertical position
+                if done:
+                    break
+            #end for
+
+            # Stop simulation
+            self.stop_simulation()
+
+            # Append current episode's reward to total rewards list for later
+            rewards_all_episodes.append(rewards_current_episode)
+
+        # Save the Q-table to a .npy file
+        with open(q_table_filename, 'wb') as f:
+            np.save(f, self.q_table)
+        print(f"Q-table saved to {q_table_filename}")
+
+        # Append this episodes rewards to a .txt file
+        with open(rewards_filename, 'wb') as f:
+            np.savetxt(f, rewards_all_episodes)
+        print(f"Saved rewards history to {rewards_filename}")
 
     def render(self, action, reward):
         pass
@@ -377,7 +441,7 @@ class CubesCups(Env):
                                                 sim.simx_opmode_blocking)
 
     def discretize_state(self, obs):
-        print(f"observation to be discretized: {obs}")
+        #print(f"observation to be discretized: {obs}")
         discretized = list()
         for i in range(len(obs)):
             scaling = ((obs[i] + abs(self.lower_bounds[i]))
@@ -396,16 +460,14 @@ class CubesCups(Env):
     def update_q(self, state, action, new_state, reward):
         # Add 2 to action variable to map correctly to Q-table indices
         action += 2
-        #print(f"action update q: {action}")
         # Update Q-table for Q(s,a)
-        #q_table[state][action] = q_table[state][action] * (1 - learning_rate) + \
-        #            learning_rate * (reward + discount_rate * np.max(q_table[new_state]))
-        #print(f"new_state: {new_state}, state: {state}")
-        #print(f"q_table[new_state]: {self.q_table[new_state]}, \nq_table[state][action]: {self.q_table[state][action]}")
-        self.q_table[state][action] += (self.learning_rate *
+        self.q_table[state][action] = self.q_table[state][action] * (1 - self.learning_rate) + \
+                    self.learning_rate * (reward + self.discount * np.max(self.q_table[new_state]))
+
+        '''self.q_table[state][action] += (self.learning_rate *
                     (reward
                     + self.discount * np.max(self.q_table[new_state])
-                    - self.q_table[state][action]))
+                    - self.q_table[state][action]))'''
     
     def pick_action(self, state):
         #Exploration-exploitation trade-off
@@ -422,3 +484,53 @@ class CubesCups(Env):
     
     def get_epsilon(self, t):
         return max(self.min_epsilon, min(1., 1. - math.log10((t + 1) / self.decay)))
+
+    def run(self):
+        t = 0
+        done = False
+        q_table_filename = "q_table2.npy"
+
+        # Load q_table.pkl for updating, if it exists
+        if(os.path.exists(q_table_filename)):
+            with open(q_table_filename, 'rb') as f:
+                self.q_table = np.load(f)
+            print("Q-table loaded.")
+        
+        # Set rotation velocity randomly
+        rng = np.random.default_rng()
+        velReal = self.rotation_velocity(rng)
+
+        # Start simulation, process objects/handles
+        self.start_simulation()
+
+        # Set initial position of the source cup and initialize state
+        state = self.discretize_state(self.reset(rng))
+
+        for j in range(velReal.shape[0]):
+            self.step_chores()
+            # Initialize the speed of the source cup at this frame
+            self.speed = velReal[j]
+
+            # Pick next action, greedy epsilon
+            action = np.argmax(self.q_table[state]) - 2
+
+            # Take next action
+            obs, reward, done, _ = self.step(action)
+
+            # Calculate new state, continuous -> discrete
+            new_state = self.discretize_state(obs)
+
+            print(f"STATE: {state}, new_state: {new_state} REWARD: {reward}, ACTION: {action}")
+        
+            # Update state variable
+            state = new_state
+            
+            # Break if cup goes back to vertical position
+            if done:
+                break
+        #end for
+        
+        # Stop simulation
+        self.stop_simulation()
+        
+        return t
