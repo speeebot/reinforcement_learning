@@ -37,7 +37,7 @@ class CubesCups(Env):
 
         self.lower_bounds = np.array([self.source_x_low, self.velReal_low])
         self.upper_bounds = np.array([self.source_x_high, self.velReal_high])
-        self.observation_space = Box(low, high) 
+        self.observation_space = Box(self.lower_bounds, self.upper_bounds) 
 
         # Initialize Q-table
         self.q_table = np.zeros(self.bins + (self.action_space.n,))
